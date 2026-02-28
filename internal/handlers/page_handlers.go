@@ -11,8 +11,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/pages/{pid}", DeletePageHandler)
 	mux.HandleFunc("POST /api/pages/{pid}/versions", AddVersionHandler)
 	mux.HandleFunc("GET /api/pages/{pid}/versions", GetHistoryHandler)
-	mux.HandleFunc("GET /api/pages/{pid}/versions/{vid}", GetVersionHandler)
+	mux.HandleFunc("GET /api/pages/{pid}/versions/{vid}", GetVersionHandler) // мы почему-то заходим сюда
 	mux.HandleFunc("POST /api/pages/{pid}/versions/{vid}/latest", SetLatestHandler)
+	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", GetLatestVersionHandler) // хотя должны сюда
 }
 
 func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +29,21 @@ func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page := storage.GPageStorage.CreatePage(input.PageId, input.Content)
+	// Гарантируем, что content — это строка, и не "null"
+	var contentStr string
+	if str, ok := input.Content.(string); ok {
+		contentStr = str
+	} else if input.Content == nil {
+		contentStr = ""
+	} else {
+		b, _ := json.Marshal(input.Content)
+		contentStr = string(b)
+		if contentStr == "null" {
+			contentStr = ""
+		}
+	}
+
+	page := storage.GPageStorage.CreatePage(input.PageId, contentStr)
 
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(page); err != nil {
@@ -70,7 +85,20 @@ func AddVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newVer, ok := storage.GPageStorage.AddVersion(pid, input.Content)
+	var contentStr string
+	if str, ok := input.Content.(string); ok {
+		contentStr = str
+	} else if input.Content == nil {
+		contentStr = ""
+	} else {
+		b, _ := json.Marshal(input.Content)
+		contentStr = string(b)
+		if contentStr == "null" {
+			contentStr = ""
+		}
+	}
+
+	newVer, ok := storage.GPageStorage.AddVersion(pid, contentStr)
 	if !ok {
 		http.Error(w, "Page not found", http.StatusNotFound)
 		return
@@ -114,7 +142,7 @@ func GetVersionHandler(w http.ResponseWriter, r *http.Request) {
 
 	version, ok := storage.GPageStorage.GetVersion(pid, vid)
 	if !ok {
-		http.Error(w, "Version or Page not found", http.StatusNotFound)
+		http.Error(w, "33 Version or Page not found", http.StatusNotFound)
 		return
 	}
 
@@ -132,7 +160,28 @@ func SetLatestHandler(w http.ResponseWriter, r *http.Request) {
 
 	version, ok := storage.GPageStorage.SetLatest(pid, vid)
 	if !ok {
-		http.Error(w, "Version or Page not found", http.StatusNotFound)
+		http.Error(w, "1 Version or Page not found", http.StatusNotFound)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(version); err != nil {
+		http.Error(w, "JSON encoding error", http.StatusInternalServerError)
+		return
+	}
+}
+
+func GetLatestVersionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	pid := r.PathValue("pid")
+	if pid == "" {
+		http.Error(w, "Missing Page ID", http.StatusBadRequest)
+		return
+	}
+
+	version, ok := storage.GPageStorage.GetLatestVersion(pid)
+	if !ok {
+		http.Error(w, "2 Latest version or Page not found", http.StatusNotFound)
 		return
 	}
 

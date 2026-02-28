@@ -2,6 +2,7 @@ POST :: /api/pages/
 -> { pageId: uiid; content: JSON }
 <- 201 { pageId: uiid; versionId: uiid; content: JSON; ... }
 
+
 DELETE :: /api/pages/{PID}
 <- 204
 
@@ -11,6 +12,9 @@ POST :: /api/pages/{PID}/versions/
 
 GET :: /api/pages/{PID}/versions/
 <- 200 [{ content: JSON, ... }, ...]
+
+GET :: /api/pages/{PID}/versions/latest
+<- 200 { pageId: uiid; content: JSON }
 
 GET :: /api/pages/{PID}/versions/{VID}/
 <- 200 { content: JSON, ... }

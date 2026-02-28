@@ -2,18 +2,18 @@ package storage
 
 import (
 	"encoding/json"
-	// "fmt"
 	"l36/internal/models"
 	"os"
 
 	"github.com/google/uuid"
+	"github.com/sergi/go-diff/diffmatchpatch"
 
-	// "path/filepath"
 	"bufio"
-	// "strings"
 	"sync"
 	"time"
 )
+
+var dmp = diffmatchpatch.New()
 
 type PageStorage struct {
 	mu    sync.RWMutex
@@ -33,18 +33,41 @@ func (s *PageStorage) CreatePage(pid string, content any) models.Page {
 		return *page
 	}
 
+	var contentStr string
+	if content == nil {
+		contentStr = ""
+	} else {
+		switch v := content.(type) {
+		case string:
+			contentStr = v
+		default:
+			b, err := json.Marshal(v)
+
+			if err != nil || string(b) == "null" {
+				contentStr = ""
+			} else {
+				contentStr = string(b)
+			}
+		}
+	}
+
+	if contentStr == "null" {
+		contentStr = ""
+	}
+
 	vid := uuid.New().String()
 
 	newVersion := models.Version{
 		ID:        vid,
-		Content:   content,
+		Content:   contentStr,
 		CreatedAt: time.Now().Unix(),
 		IsLatest:  true,
 	}
 
 	newPage := models.Page{
-		ID:       pid,
-		Versions: []models.Version{newVersion},
+		ID:          pid,
+		Versions:    []models.Version{newVersion},
+		LatestIndex: 0,
 	}
 
 	s.pages[pid] = &newPage
@@ -62,28 +85,36 @@ func (s *PageStorage) DeletePage(pid string) bool {
 	return false
 }
 
-func (s *PageStorage) AddVersion(pid string, content any) (models.Version, bool) {
+func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	page, ok := s.pages[pid]
-	if !ok {
+	if !ok || len(page.Versions) == 0 {
 		return models.Version{}, false
 	}
 
-	if len(page.Versions) > 0 {
-		page.Versions[len(page.Versions)-1].IsLatest = false
-	}
+	lastIdx := len(page.Versions) - 1
+	oldLatest := &page.Versions[lastIdx]
+
+	diffs := dmp.DiffMain(newContent, oldLatest.Content, false)
+	delta := dmp.DiffToDelta(diffs)
+
+	oldLatest.Content = ""
+	oldLatest.Patch = delta
+	oldLatest.IsLatest = false
 
 	newVer := models.Version{
 		ID:        uuid.New().String(),
-		ParentID:  page.Versions[len(page.Versions)-1].ID, // Ссылка на предка
-		Content:   content,
+		ParentID:  oldLatest.ID,
+		Content:   newContent,
 		CreatedAt: time.Now().Unix(),
 		IsLatest:  true,
 	}
 
 	page.Versions = append(page.Versions, newVer)
+
+	page.LatestIndex = len(page.Versions) - 1
 
 	return newVer, true
 }
@@ -108,17 +139,42 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) 
 	defer s.mu.RUnlock()
 
 	page, ok := s.pages[pid]
-	if !ok {
+	if !ok || len(page.Versions) == 0 {
 		return models.Version{}, false
 	}
 
-	for _, v := range page.Versions {
+	var targetIdx int = -1
+	for i, v := range page.Versions {
 		if v.ID == vid {
-			return v, true
+			targetIdx = i
+			break
 		}
 	}
 
-	return models.Version{}, false
+	if targetIdx == -1 {
+		return models.Version{}, false
+	}
+
+	lastIdx := len(page.Versions) - 1
+	if targetIdx == lastIdx {
+		return page.Versions[targetIdx], true
+	}
+
+	currentText := page.Versions[lastIdx].Content
+
+	for i := lastIdx; i > targetIdx; i-- {
+		patchStr := page.Versions[i-1].Patch
+		if patchStr == "" {
+			continue
+		}
+
+		diffs, _ := dmp.DiffFromDelta(currentText, patchStr)
+		currentText = dmp.DiffText2(diffs)
+	}
+
+	result := page.Versions[targetIdx]
+	result.Content = currentText
+	return result, true
 }
 
 func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
@@ -130,21 +186,33 @@ func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
 		return models.Version{}, false
 	}
 
-	var targetVersion *models.Version
-
 	for i := range page.Versions {
 		if page.Versions[i].ID == vid {
-			targetVersion = &page.Versions[i]
-		}
-		page.Versions[i].IsLatest = false
-	}
+			page.Versions[page.LatestIndex].IsLatest = false
 
-	if targetVersion != nil {
-		targetVersion.IsLatest = true
-		return *targetVersion, true
+			page.LatestIndex = i
+
+			page.Versions[i].IsLatest = true
+
+			return page.Versions[i], true
+		}
 	}
 
 	return models.Version{}, false
+}
+
+func (s *PageStorage) GetLatestVersion(pid string) (models.Version, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	page, ok := s.pages[pid]
+	if !ok || len(page.Versions) == 0 {
+		return models.Version{}, false
+	}
+
+	targetVid := page.Versions[page.LatestIndex].ID
+
+	return s.GetVersion(pid, targetVid)
 }
 
 func (s *PageStorage) Dump(filePath string) error {
