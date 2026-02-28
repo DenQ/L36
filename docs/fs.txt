@@ -1,0 +1,20 @@
+L36/                        # Корень проекта (имя модуля в go.mod: l36)
+├── cmd/
+│   └── l36/                # Точка входа
+│       └── main.go         # Твой файл с логотипом и http.Server
+├── internal/               # Внутренняя логика (бизнес-ядро)
+│   ├── handlers/           # HTTP хендлеры (GetUserList, CreateUser и т.д.)
+│   │   ├── handlers.go
+│   │   └── middleware.go   # Твой Logger тут
+│   ├── storage/            # Сердце авианосца: 36 шардов
+│   │   ├── storage.go      # Конструктор на 36 отсеков
+│   │   └── shard.go        # Логика одного отсека (Mutex + Map)
+│   └── models/             # Описание структур (User, Version, Page)
+│       └── models.go
+├── pkg/                    # Вспомогательные утилиты (общедоступные)
+├── data/                   # Сюда полетят 36 .log файлов (в .gitignore)
+├── bin/                    # Сюда упадет скомпилированный l36 (в .gitignore)
+├── .env                    # Конфиги (PORT=1236)
+├── .gitignore              # Исключения для Git
+├── go.mod                  # module l36
+└── Makefile                # Команды сборки (make build, make run)

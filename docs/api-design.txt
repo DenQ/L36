@@ -1,0 +1,19 @@
+POST :: /api/pages/
+-> { pageId: uiid; content: JSON }
+<- 201 { pageId: uiid; versionId: uiid; content: JSON; ... }
+
+DELETE :: /api/pages/{PID}
+<- 204
+
+POST :: /api/pages/{PID}/versions/
+-> { content: JSON }
+<- 201 { pageId: uiid; versionId: uiid; content: JSON; ... }
+
+GET :: /api/pages/{PID}/versions/
+<- 200 [{ content: JSON, ... }, ...]
+
+GET :: /api/pages/{PID}/versions/{VID}/
+<- 200 { content: JSON, ... }
+
+POST :: /api/pages/{PID}/versions/{VID}/latest
+<- 200 { pageId: uiid; versionId: uiid; content: JSON; latest: true; ... }
