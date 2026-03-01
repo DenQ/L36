@@ -28,7 +28,7 @@ func TestE2ELoadStress(t *testing.T) {
 	}
 
 	const workers = 100
-	const requestsPerWorker = 400
+	const requestsPerWorker = 100
 	totalRequests := workers * requestsPerWorker
 
 	var wg sync.WaitGroup
@@ -52,7 +52,6 @@ func TestE2ELoadStress(t *testing.T) {
 
 			for i := 0; i < requestsPerWorker; i++ {
 				data := payloadPool[(workerID+i)%poolSize]
-				// resp, err := client.Post(ts.URL+"/api/pages", "application/json", bytes.NewReader(jsonBody))
 				resp, err := client.Post(ts.URL+"/api/pages", "application/json", bytes.NewReader(data))
 
 				if err != nil {

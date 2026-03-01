@@ -14,4 +14,5 @@ func TestAllHandlers(t *testing.T) {
 
 	// В самом конце даем жару стресс-тестом
 	t.Run("Stress", TestE2ELoadStress)
+	t.Run("Stress-2", TestE2EFullLifecycleStress)
 }

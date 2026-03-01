@@ -37,24 +37,30 @@ func NewPageStorage() *PageStorage {
 
 var GPageStorage = NewPageStorage()
 
+var shardTable [256]int
+
+func init() {
+	for i := 0; i < 256; i++ {
+		char := byte(i)
+		switch {
+		case char >= '0' && char <= '9':
+			shardTable[i] = int(char - '0')
+		case char >= 'a' && char <= 'z':
+			shardTable[i] = int(char - 'a' + 10)
+		case char >= 'A' && char <= 'Z':
+			shardTable[i] = int(char - 'A' + 10)
+		default:
+			shardTable[i] = 0
+		}
+	}
+}
+
 func (s *PageStorage) getShard(pid string) *Shard {
 	if len(pid) == 0 {
 		return s.shards[0]
 	}
-	char := pid[0]
-	var idx int
 
-	switch {
-	case char >= '0' && char <= '9':
-		idx = int(char - '0')
-	case char >= 'a' && char <= 'z':
-		idx = int(char - 'a' + 10)
-	case char >= 'A' && char <= 'Z':
-		idx = int(char - 'A' + 10)
-	default:
-		idx = 0
-	}
-	return s.shards[idx%36]
+	return s.shards[shardTable[pid[0]]%36]
 }
 
 func (s *PageStorage) CreatePage(pid string, content any) models.Page {
@@ -124,10 +130,29 @@ func (s *PageStorage) DeletePage(pid string) bool {
 
 func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version, bool) {
 	shard := s.getShard(pid)
+
+	// --- ЭТАП 1: БЫСТРАЯ ПОДГОТОВКА (RLock) ---
+	shard.mu.RLock()
+	page, ok := shard.pages[pid]
+	if !ok || len(page.Versions) == 0 {
+		shard.mu.RUnlock()
+		return models.Version{}, false
+	}
+	// Забираем только то, что нужно для диффа, и сразу отпускаем мьютекс
+	oldContent := page.Versions[len(page.Versions)-1].Content
+	shard.mu.RUnlock()
+
+	// --- ЭТАП 2: ТЯЖЕЛАЯ МАТЕМАТИКА (БЕЗ БЛОКИРОВОК) ---
+	// Теперь все 16 ядер могут считать 16 диффов ОДНОВРЕМЕННО!
+	diffs := dmp.DiffMain(newContent, oldContent, false)
+	delta := dmp.DiffToDelta(diffs)
+
+	// --- ЭТАП 3: БЫСТРАЯ ЗАПИСЬ (Lock) ---
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
-	page, ok := shard.pages[pid]
+	// Перепроверяем, не удалили ли страницу, пока мы считали дифф
+	page, ok = shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
 		return models.Version{}, false
 	}
@@ -135,13 +160,12 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 	lastIdx := len(page.Versions) - 1
 	oldLatest := &page.Versions[lastIdx]
 
-	diffs := dmp.DiffMain(newContent, oldLatest.Content, false)
-	delta := dmp.DiffToDelta(diffs)
-
+	// Обновляем старую версию (архивируем)
 	oldLatest.Content = ""
 	oldLatest.Patch = delta
 	oldLatest.IsLatest = false
 
+	// Создаем новую
 	newVer := models.Version{
 		ID:        uuid.New().String(),
 		ParentID:  oldLatest.ID,
@@ -151,11 +175,45 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 	}
 
 	page.Versions = append(page.Versions, newVer)
-
 	page.LatestIndex = len(page.Versions) - 1
 
 	return newVer, true
 }
+
+// func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version, bool) {
+// 	shard := s.getShard(pid)
+// 	shard.mu.Lock()
+// 	defer shard.mu.Unlock()
+
+// 	page, ok := shard.pages[pid]
+// 	if !ok || len(page.Versions) == 0 {
+// 		return models.Version{}, false
+// 	}
+
+// 	lastIdx := len(page.Versions) - 1
+// 	oldLatest := &page.Versions[lastIdx]
+
+// 	diffs := dmp.DiffMain(newContent, oldLatest.Content, false)
+// 	delta := dmp.DiffToDelta(diffs)
+
+// 	oldLatest.Content = ""
+// 	oldLatest.Patch = delta
+// 	oldLatest.IsLatest = false
+
+// 	newVer := models.Version{
+// 		ID:        uuid.New().String(),
+// 		ParentID:  oldLatest.ID,
+// 		Content:   newContent,
+// 		CreatedAt: time.Now().Unix(),
+// 		IsLatest:  true,
+// 	}
+
+// 	page.Versions = append(page.Versions, newVer)
+
+// 	page.LatestIndex = len(page.Versions) - 1
+
+// 	return newVer, true
+// }
 
 func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
 	shard := s.getShard(pid)
