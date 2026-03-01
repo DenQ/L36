@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// Тест на "прочность" и чистый RPS
 func BenchmarkStoragePerformance(b *testing.B) {
 	s := GPageStorage
 
@@ -28,25 +27,3 @@ func BenchmarkStoragePerformance(b *testing.B) {
 		}
 	})
 }
-
-// ➜  L36 git:(master) go test -bench=BenchmarkStoragePerformance -benchmem ./internal/storage
-
-// [L-36] Restored version 1 from 1000 patches in 553.554µs
-// goos: darwin
-// goarch: amd64
-// pkg: l36/internal/storage
-// cpu: Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz
-// BenchmarkStoragePerformance-16    	  364944	      3539 ns/op	    1548 B/op	      30 allocs/op
-// PASS
-// ok  	l36/internal/storage	2.161s
-
-// ➜  L36 git:(master) ✗ go test -bench=BenchmarkStoragePerformance -benchmem ./internal/storage
-
-// [L-36] Restored version 1 from 1000 patches in 494.246µs
-// goos: darwin
-// goarch: amd64
-// pkg: l36/internal/storage
-// cpu: Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz
-// BenchmarkStoragePerformance-16    	  796767	      1610 ns/op	    1473 B/op	      28 allocs/op
-// PASS
-// ok  	l36/internal/storage	1.830s

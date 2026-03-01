@@ -16,8 +16,8 @@ dev:
 test:
 	go test -v ./internal/**
 
-# bench:
-# 	go test -v -bench=. ./internal/storage
+bench:
+	go test -v -bench=. ./internal/storage
 
 race:
 	go test -v -race ./...

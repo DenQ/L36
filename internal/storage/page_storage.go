@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"fmt"
 	"l36/internal/models"
 	"os"
 
@@ -255,38 +256,33 @@ func (s *PageStorage) GetLatestVersion(pid string) (models.Version, bool) {
 	return s.GetVersion(pid, targetVid)
 }
 
-func (s *PageStorage) Dump(filePath string) error {
+func (s *Shard) dump(filePath string) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.pages) == 0 {
+		return nil
+	}
+
 	tmpFile := filePath + ".tmp"
 	f, err := os.Create(tmpFile)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	encoder := json.NewEncoder(f)
-
-	for i := 0; i < 36; i++ {
-		shard := s.shards[i]
-
-		shard.mu.RLock()
-		for _, page := range shard.pages {
-			if err := encoder.Encode(page); err != nil {
-				shard.mu.RUnlock()
-				return err
-			}
+	for _, page := range s.pages {
+		if err := encoder.Encode(page); err != nil {
+			f.Close()
+			return err
 		}
-		shard.mu.RUnlock()
 	}
-
-	if err := f.Sync(); err != nil {
-		return err
-	}
+	f.Sync()
 	f.Close()
-
 	return os.Rename(tmpFile, filePath)
 }
 
-func (s *PageStorage) Load(filePath string) error {
+func (s *Shard) load(filePath string) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -296,17 +292,68 @@ func (s *PageStorage) Load(filePath string) error {
 	}
 	defer f.Close()
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
 	for scanner.Scan() {
 		var page models.Page
 		if err := json.Unmarshal(scanner.Bytes(), &page); err != nil {
 			return err
 		}
-
-		shard := s.getShard(page.ID)
-		shard.mu.Lock()
-		shard.pages[page.ID] = &page
-		shard.mu.Unlock()
+		s.pages[page.ID] = &page
 	}
 	return scanner.Err()
+}
+
+func (s *PageStorage) Dump(dataDir string) error {
+	var wg sync.WaitGroup
+	errs := make(chan error, 36)
+
+	for i := 0; i < 36; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			path := fmt.Sprintf("%s/shard_%d.json", dataDir, idx)
+			if err := s.shards[idx].dump(path); err != nil {
+				errs <- fmt.Errorf("shard %d dump failed: %w", idx, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+	if len(errs) > 0 {
+		return <-errs
+	}
+	return nil
+}
+
+func (s *PageStorage) Load(dataDir string) error {
+	var wg sync.WaitGroup
+	errs := make(chan error, 36)
+
+	start := time.Now()
+	for i := 0; i < 36; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			path := fmt.Sprintf("%s/shard_%d.json", dataDir, idx)
+			if err := s.shards[idx].load(path); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+
+	fmt.Printf(" [L-36] LOAD COMPLETE: %v\n", time.Since(start))
+	if len(errs) > 0 {
+		return <-errs
+	}
+	return nil
 }
