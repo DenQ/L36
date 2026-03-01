@@ -15,21 +15,55 @@ import (
 
 var dmp = diffmatchpatch.New()
 
-type PageStorage struct {
+type Shard struct {
 	mu    sync.RWMutex
 	pages map[string]*models.Page
 }
 
-var GPageStorage = &PageStorage{
-	pages: make(map[string]*models.Page),
+type PageStorage struct {
+	shards [36]*Shard
+}
+
+func NewPageStorage() *PageStorage {
+	ps := &PageStorage{}
+	for i := 0; i < 36; i++ {
+		ps.shards[i] = &Shard{
+			pages: make(map[string]*models.Page),
+		}
+	}
+	return ps
+}
+
+var GPageStorage = NewPageStorage()
+
+func (s *PageStorage) getShard(pid string) *Shard {
+	if len(pid) == 0 {
+		return s.shards[0]
+	}
+	char := pid[0]
+	var idx int
+
+	switch {
+	case char >= '0' && char <= '9':
+		idx = int(char - '0')
+	case char >= 'a' && char <= 'z':
+		idx = int(char - 'a' + 10)
+	case char >= 'A' && char <= 'Z':
+		idx = int(char - 'A' + 10)
+	default:
+		idx = 0
+	}
+	return s.shards[idx%36]
 }
 
 func (s *PageStorage) CreatePage(pid string, content any) models.Page {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(pid)
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
 	// if page exist return her. Else better htrow error...
-	if page, ok := s.pages[pid]; ok {
+	if page, ok := shard.pages[pid]; ok {
 		return *page
 	}
 
@@ -70,26 +104,29 @@ func (s *PageStorage) CreatePage(pid string, content any) models.Page {
 		LatestIndex: 0,
 	}
 
-	s.pages[pid] = &newPage
+	shard.pages[pid] = &newPage
 	return newPage
 }
 
 func (s *PageStorage) DeletePage(pid string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(pid)
 
-	if _, ok := s.pages[pid]; ok {
-		delete(s.pages, pid)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	if _, ok := shard.pages[pid]; ok {
+		delete(shard.pages, pid)
 		return true
 	}
 	return false
 }
 
 func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(pid)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
-	page, ok := s.pages[pid]
+	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
 		return models.Version{}, false
 	}
@@ -120,10 +157,11 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 }
 
 func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	shard := s.getShard(pid)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
 
-	page, ok := s.pages[pid]
+	page, ok := shard.pages[pid]
 	if !ok {
 		return nil, false
 	}
@@ -135,10 +173,11 @@ func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
 }
 
 func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	shard := s.getShard(pid)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
 
-	page, ok := s.pages[pid]
+	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
 		return models.Version{}, false
 	}
@@ -178,10 +217,11 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) 
 }
 
 func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(pid)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
-	page, ok := s.pages[pid]
+	page, ok := shard.pages[pid]
 	if !ok {
 		return models.Version{}, false
 	}
@@ -202,23 +242,20 @@ func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
 }
 
 func (s *PageStorage) GetLatestVersion(pid string) (models.Version, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	page, ok := s.pages[pid]
+	shard := s.getShard(pid)
+	shard.mu.RLock()
+	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
+		shard.mu.RUnlock()
 		return models.Version{}, false
 	}
-
 	targetVid := page.Versions[page.LatestIndex].ID
+	shard.mu.RUnlock()
 
 	return s.GetVersion(pid, targetVid)
 }
 
 func (s *PageStorage) Dump(filePath string) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	tmpFile := filePath + ".tmp"
 	f, err := os.Create(tmpFile)
 	if err != nil {
@@ -228,10 +265,17 @@ func (s *PageStorage) Dump(filePath string) error {
 
 	encoder := json.NewEncoder(f)
 
-	for _, page := range s.pages {
-		if err := encoder.Encode(page); err != nil {
-			return err
+	for i := 0; i < 36; i++ {
+		shard := s.shards[i]
+
+		shard.mu.RLock()
+		for _, page := range shard.pages {
+			if err := encoder.Encode(page); err != nil {
+				shard.mu.RUnlock()
+				return err
+			}
 		}
+		shard.mu.RUnlock()
 	}
 
 	if err := f.Sync(); err != nil {
@@ -243,9 +287,6 @@ func (s *PageStorage) Dump(filePath string) error {
 }
 
 func (s *PageStorage) Load(filePath string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	f, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -256,21 +297,16 @@ func (s *PageStorage) Load(filePath string) error {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
-	const maxCapacity = 10 * 1024 * 1024
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, maxCapacity)
-
 	for scanner.Scan() {
 		var page models.Page
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		if err := json.Unmarshal(line, &page); err != nil {
+		if err := json.Unmarshal(scanner.Bytes(), &page); err != nil {
 			return err
 		}
-		s.pages[page.ID] = &page
-	}
 
+		shard := s.getShard(page.ID)
+		shard.mu.Lock()
+		shard.pages[page.ID] = &page
+		shard.mu.Unlock()
+	}
 	return scanner.Err()
 }
