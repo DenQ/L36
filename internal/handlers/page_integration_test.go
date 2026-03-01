@@ -3,15 +3,12 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
-	// "fmt"
+	"github.com/stretchr/testify/assert"
 	"l36/internal/models"
-	// "l36/internal/storage"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestFullPageFlow(t *testing.T) {
@@ -170,4 +167,50 @@ func TestConcurrentVersions(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, latestCount, "В любой момент времени должна быть только одна актуальная версия")
+}
+
+func TestSetLatestRollback(t *testing.T) {
+	pID := "rollback-test-id"
+	content1 := "First Strategic Data"
+	body1, _ := json.Marshal(map[string]any{"pageId": pID, "content": content1})
+
+	rr1 := httptest.NewRecorder()
+	CreatePageHandler(rr1, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(body1)))
+
+	var page models.Page
+	json.Unmarshal(rr1.Body.Bytes(), &page)
+	v1ID := page.Versions[0].ID
+
+	content2 := "Second Strategic Data"
+	body2, _ := json.Marshal(map[string]any{"content": content2})
+
+	req2 := httptest.NewRequest("POST", "/api/pages/"+pID+"/versions", bytes.NewBuffer(body2))
+	req2.SetPathValue("pid", pID)
+	AddVersionHandler(httptest.NewRecorder(), req2)
+
+	reqL := httptest.NewRequest("POST", "/api/pages/"+pID+"/versions/"+v1ID+"/latest", nil)
+	reqL.SetPathValue("pid", pID)
+	reqL.SetPathValue("vid", v1ID)
+	rrL := httptest.NewRecorder()
+
+	SetLatestHandler(rrL, reqL)
+	assert.Equal(t, http.StatusOK, rrL.Code)
+
+	reqH := httptest.NewRequest("GET", "/api/pages/"+pID+"/versions", nil)
+	reqH.SetPathValue("pid", pID)
+	rrH := httptest.NewRecorder()
+	GetHistoryHandler(rrH, reqH)
+
+	var history []models.Version
+	json.Unmarshal(rrH.Body.Bytes(), &history)
+
+	assert.Len(t, history, 2)
+
+	for _, v := range history {
+		if v.ID == v1ID {
+			assert.True(t, v.IsLatest, "V1 должна стать Latest после отката")
+		} else {
+			assert.False(t, v.IsLatest, "V2 должна потерять статус Latest")
+		}
+	}
 }
