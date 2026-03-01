@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"fmt"
 	"l36/internal/models"
 	"os"
 
@@ -15,21 +16,61 @@ import (
 
 var dmp = diffmatchpatch.New()
 
-type PageStorage struct {
+type Shard struct {
 	mu    sync.RWMutex
 	pages map[string]*models.Page
 }
 
-var GPageStorage = &PageStorage{
-	pages: make(map[string]*models.Page),
+type PageStorage struct {
+	shards [36]*Shard
+}
+
+func NewPageStorage() *PageStorage {
+	ps := &PageStorage{}
+	for i := 0; i < 36; i++ {
+		ps.shards[i] = &Shard{
+			pages: make(map[string]*models.Page),
+		}
+	}
+	return ps
+}
+
+var GPageStorage = NewPageStorage()
+
+var shardTable [256]int
+
+func init() {
+	for i := 0; i < 256; i++ {
+		char := byte(i)
+		switch {
+		case char >= '0' && char <= '9':
+			shardTable[i] = int(char - '0')
+		case char >= 'a' && char <= 'z':
+			shardTable[i] = int(char - 'a' + 10)
+		case char >= 'A' && char <= 'Z':
+			shardTable[i] = int(char - 'A' + 10)
+		default:
+			shardTable[i] = 0
+		}
+	}
+}
+
+func (s *PageStorage) getShard(pid string) *Shard {
+	if len(pid) == 0 {
+		return s.shards[0]
+	}
+
+	return s.shards[shardTable[pid[0]]%36]
 }
 
 func (s *PageStorage) CreatePage(pid string, content any) models.Page {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(pid)
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
 	// if page exist return her. Else better htrow error...
-	if page, ok := s.pages[pid]; ok {
+	if page, ok := shard.pages[pid]; ok {
 		return *page
 	}
 
@@ -70,35 +111,49 @@ func (s *PageStorage) CreatePage(pid string, content any) models.Page {
 		LatestIndex: 0,
 	}
 
-	s.pages[pid] = &newPage
+	shard.pages[pid] = &newPage
 	return newPage
 }
 
 func (s *PageStorage) DeletePage(pid string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(pid)
 
-	if _, ok := s.pages[pid]; ok {
-		delete(s.pages, pid)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	if _, ok := shard.pages[pid]; ok {
+		delete(shard.pages, pid)
 		return true
 	}
 	return false
 }
 
 func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(pid)
 
-	page, ok := s.pages[pid]
+	shard.mu.RLock()
+	page, ok := shard.pages[pid]
+	if !ok || len(page.Versions) == 0 {
+		shard.mu.RUnlock()
+		return models.Version{}, false
+	}
+
+	oldContent := page.Versions[len(page.Versions)-1].Content
+	shard.mu.RUnlock()
+
+	diffs := dmp.DiffMain(newContent, oldContent, false)
+	delta := dmp.DiffToDelta(diffs)
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	page, ok = shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
 		return models.Version{}, false
 	}
 
 	lastIdx := len(page.Versions) - 1
 	oldLatest := &page.Versions[lastIdx]
-
-	diffs := dmp.DiffMain(newContent, oldLatest.Content, false)
-	delta := dmp.DiffToDelta(diffs)
 
 	oldLatest.Content = ""
 	oldLatest.Patch = delta
@@ -113,17 +168,17 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 	}
 
 	page.Versions = append(page.Versions, newVer)
-
 	page.LatestIndex = len(page.Versions) - 1
 
 	return newVer, true
 }
 
 func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	shard := s.getShard(pid)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
 
-	page, ok := s.pages[pid]
+	page, ok := shard.pages[pid]
 	if !ok {
 		return nil, false
 	}
@@ -135,10 +190,11 @@ func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
 }
 
 func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	shard := s.getShard(pid)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
 
-	page, ok := s.pages[pid]
+	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
 		return models.Version{}, false
 	}
@@ -178,10 +234,11 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) 
 }
 
 func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(pid)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
-	page, ok := s.pages[pid]
+	page, ok := shard.pages[pid]
 	if !ok {
 		return models.Version{}, false
 	}
@@ -202,50 +259,46 @@ func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
 }
 
 func (s *PageStorage) GetLatestVersion(pid string) (models.Version, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	page, ok := s.pages[pid]
+	shard := s.getShard(pid)
+	shard.mu.RLock()
+	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
+		shard.mu.RUnlock()
 		return models.Version{}, false
 	}
-
 	targetVid := page.Versions[page.LatestIndex].ID
+	shard.mu.RUnlock()
 
 	return s.GetVersion(pid, targetVid)
 }
 
-func (s *PageStorage) Dump(filePath string) error {
+func (s *Shard) dump(filePath string) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if len(s.pages) == 0 {
+		return nil
+	}
 
 	tmpFile := filePath + ".tmp"
 	f, err := os.Create(tmpFile)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	encoder := json.NewEncoder(f)
-
 	for _, page := range s.pages {
 		if err := encoder.Encode(page); err != nil {
+			f.Close()
 			return err
 		}
 	}
-
-	if err := f.Sync(); err != nil {
-		return err
-	}
+	f.Sync()
 	f.Close()
-
 	return os.Rename(tmpFile, filePath)
 }
 
-func (s *PageStorage) Load(filePath string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+func (s *Shard) load(filePath string) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -255,22 +308,68 @@ func (s *PageStorage) Load(filePath string) error {
 	}
 	defer f.Close()
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	scanner := bufio.NewScanner(f)
-	const maxCapacity = 10 * 1024 * 1024
 	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, maxCapacity)
+	scanner.Buffer(buf, 10*1024*1024)
 
 	for scanner.Scan() {
 		var page models.Page
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		if err := json.Unmarshal(line, &page); err != nil {
+		if err := json.Unmarshal(scanner.Bytes(), &page); err != nil {
 			return err
 		}
 		s.pages[page.ID] = &page
 	}
-
 	return scanner.Err()
+}
+
+func (s *PageStorage) Dump(dataDir string) error {
+	var wg sync.WaitGroup
+	errs := make(chan error, 36)
+
+	for i := 0; i < 36; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			path := fmt.Sprintf("%s/shard_%d.json", dataDir, idx)
+			if err := s.shards[idx].dump(path); err != nil {
+				errs <- fmt.Errorf("shard %d dump failed: %w", idx, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+	if len(errs) > 0 {
+		return <-errs
+	}
+	return nil
+}
+
+func (s *PageStorage) Load(dataDir string) error {
+	var wg sync.WaitGroup
+	errs := make(chan error, 36)
+
+	start := time.Now()
+	for i := 0; i < 36; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			path := fmt.Sprintf("%s/shard_%d.json", dataDir, idx)
+			if err := s.shards[idx].load(path); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+
+	fmt.Printf(" [L-36] LOAD COMPLETE: %v\n", time.Since(start))
+	if len(errs) > 0 {
+		return <-errs
+	}
+	return nil
 }
