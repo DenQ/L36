@@ -60,11 +60,11 @@ func main() {
 	mux := http.NewServeMux()
 	handlers.RegisterRoutes(mux)
 
-	wrappedHandler := handlers.Logger(mux)
+	// wrappedHandler := handlers.Logger(mux)
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: wrappedHandler,
+		Addr: addr,
+		// Handler: wrappedHandler,
 	}
 
 	stop := make(chan os.Signal, 1)

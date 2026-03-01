@@ -13,7 +13,7 @@ import (
 )
 
 func TestE2EPageFlow(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	testPID := "test-page-36"
 	mux := http.NewServeMux()
 	RegisterRoutes(mux)
