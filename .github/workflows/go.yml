@@ -1,0 +1,31 @@
+name: L-36 CI Pipeline (Future Tech 1.26)
+
+on:
+  push:
+    branches: [ "master", "main", "shards", "cicd" ]
+  pull_request:
+    branches: [ "master", "main", "cicd" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go 1.26
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26.0'
+        check-latest: true
+
+    - name: Install dependencies
+      run: go mod tidy
+
+    - name: Run Unit Tests with Race Detector
+      run: go test -v -race ./internal/...
+
+    - name: Run Heavy Stress Test
+      run: |
+        sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535"
+        sudo sysctl -w net.ipv4.tcp_tw_reuse=1
+        go test -v ./tests/stress/... -run TestE2EFullLifecycleStress
