@@ -2,9 +2,7 @@ name: L-36 CI Pipeline
 
 on:
   push:
-    branches: [ "master", "main", "shards", "cicd" ]
-  pull_request:
-    branches: [ "master", "main", "cicd" ]
+    branches: [ "**" ]
 
 jobs:
   test:
