@@ -1,4 +1,4 @@
-name: L-36 CI Pipeline (Future Tech 1.26)
+name: L-36 CI Pipeline
 
 on:
   push:
@@ -12,20 +12,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Go 1.26
+    - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26.0'
-        check-latest: true
+        go-version: '1.22'
+        cache: true
 
     - name: Install dependencies
-      run: go mod tidy
+      run: make install
 
-    - name: Run Unit Tests with Race Detector
-      run: go test -v -race ./internal/...
+    - name: Run Race Detector
+      run: make race
 
     - name: Run Heavy Stress Test
       run: |
         sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535"
         sudo sysctl -w net.ipv4.tcp_tw_reuse=1
-        go test -v ./tests/stress/... -run TestE2EFullLifecycleStress
+
+        make stress
