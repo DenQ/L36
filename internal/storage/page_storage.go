@@ -10,11 +10,14 @@ import (
 	"github.com/sergi/go-diff/diffmatchpatch"
 
 	"bufio"
+	"hash/fnv"
 	"sync"
 	"time"
 )
 
 var dmp = diffmatchpatch.New()
+
+type DiffFunc func(oldContent, newContent string) string
 
 type Shard struct {
 	mu    sync.RWMutex
@@ -22,16 +25,56 @@ type Shard struct {
 }
 
 type PageStorage struct {
-	shards [36]*Shard
+	shards   [36]*Shard
+	fastDiff DiffFunc
+}
+
+func MemoizeDiff(fn DiffFunc) DiffFunc {
+	cache := make(map[uint64]string)
+	var mu sync.RWMutex
+
+	return func(oldContent, newContent string) string {
+		h := fnv.New64a()
+		h.Write([]byte(oldContent))
+		h.Write([]byte(newContent))
+		key := h.Sum64()
+
+		mu.RLock()
+		if result, ok := cache[key]; ok {
+			mu.RUnlock()
+			return result
+		}
+		mu.RUnlock()
+
+		result := fn(oldContent, newContent)
+
+		mu.Lock()
+		if len(cache) > 10000 { // Ограничитель памяти
+			cache = make(map[uint64]string)
+		}
+		cache[key] = result
+		mu.Unlock()
+
+		return result
+	}
 }
 
 func NewPageStorage() *PageStorage {
 	ps := &PageStorage{}
+
+	slowDiff := func(old, new string) string {
+		diffs := dmp.DiffMain(new, old, true)
+		return dmp.DiffToDelta(diffs)
+	}
+
+	ps.fastDiff = MemoizeDiff(slowDiff)
+
 	for i := 0; i < 36; i++ {
 		ps.shards[i] = &Shard{
 			pages: make(map[string]*models.Page),
 		}
 	}
+
 	return ps
 }
 
@@ -40,6 +83,8 @@ var GPageStorage = NewPageStorage()
 var shardTable [256]int
 
 func init() {
+	dmp.DiffTimeout = time.Millisecond * 10
+
 	for i := 0; i < 256; i++ {
 		char := byte(i)
 		switch {
@@ -141,8 +186,7 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 	oldContent := page.Versions[len(page.Versions)-1].Content
 	shard.mu.RUnlock()
 
-	diffs := dmp.DiffMain(newContent, oldContent, false)
-	delta := dmp.DiffToDelta(diffs)
+	delta := s.fastDiff(oldContent, newContent)
 
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
