@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"l36/internal/storage"
 	"net/http"
 )
@@ -42,9 +43,17 @@ func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	page, ok := storage.GPageStorage.CreatePage(input.PageId, contentStr)
-	if !ok {
+	page, err := storage.GPageStorage.CreatePage(input.PageId, contentStr)
+	if errors.Is(err, storage.ErrPageExists) {
+		http.Error(w, "Page already exists", http.StatusConflict)
+		return
+	}
+	if errors.Is(err, storage.ErrEmptyPageID) {
 		http.Error(w, "Missing page ID", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 

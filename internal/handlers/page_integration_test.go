@@ -263,3 +263,24 @@ func TestCreatePageRejectsEmptyID(t *testing.T) {
 	_, found := storage.GPageStorage.GetHistory("")
 	assert.False(t, found)
 }
+
+func TestCreatePageConflict(t *testing.T) {
+	const pid = "handler-create-duplicate"
+	first := `{"pageId":"` + pid + `","content":"original"}`
+	second := `{"pageId":"` + pid + `","content":"replacement"}`
+
+	req1 := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(first))
+	rr1 := httptest.NewRecorder()
+	CreatePageHandler(rr1, req1)
+	assert.Equal(t, http.StatusCreated, rr1.Code)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(second))
+	rr2 := httptest.NewRecorder()
+	CreatePageHandler(rr2, req2)
+	assert.Equal(t, http.StatusConflict, rr2.Code)
+	assert.Equal(t, "Page already exists\n", rr2.Body.String())
+
+	history, found := storage.GPageStorage.GetHistory(pid)
+	assert.True(t, found)
+	assert.Equal(t, "original", history[0].Content)
+}

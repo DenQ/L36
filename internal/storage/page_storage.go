@@ -10,6 +10,7 @@ import (
 	"github.com/sergi/go-diff/diffmatchpatch"
 
 	"bufio"
+	"errors"
 	"hash/fnv"
 	"io"
 	"sync"
@@ -96,9 +97,14 @@ func (s *PageStorage) getShard(pid string) *Shard {
 	return s.shards[shardIndex(pid)]
 }
 
-func (s *PageStorage) CreatePage(pid string, content any) (models.Page, bool) {
+var (
+	ErrEmptyPageID = errors.New("empty page id")
+	ErrPageExists  = errors.New("page already exists")
+)
+
+func (s *PageStorage) CreatePage(pid string, content any) (models.Page, error) {
 	if pid == "" {
-		return models.Page{}, false
+		return models.Page{}, ErrEmptyPageID
 	}
 
 	shard := s.getShard(pid)
@@ -106,9 +112,8 @@ func (s *PageStorage) CreatePage(pid string, content any) (models.Page, bool) {
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
-	// if page exist return her. Else better htrow error...
-	if page, ok := shard.pages[pid]; ok {
-		return *page, true
+	if _, ok := shard.pages[pid]; ok {
+		return models.Page{}, ErrPageExists
 	}
 
 	var contentStr string
@@ -149,7 +154,7 @@ func (s *PageStorage) CreatePage(pid string, content any) (models.Page, bool) {
 	}
 
 	shard.pages[pid] = &newPage
-	return newPage, true
+	return newPage, nil
 }
 
 func (s *PageStorage) DeletePage(pid string) bool {

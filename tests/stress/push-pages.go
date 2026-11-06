@@ -60,7 +60,9 @@ func PushPages(t *testing.T) {
 					return
 				}
 
-				assert.Equal(t, http.StatusCreated, resp.StatusCode)
+				if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+					assert.Failf(t, "unexpected status", "got %d", resp.StatusCode)
+				}
 				drain(resp)
 			}
 		}(w)
