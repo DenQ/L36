@@ -95,7 +95,7 @@ var (
 	ErrCorruptPatch    = errors.New("corrupt patch")
 )
 
-func (s *PageStorage) CreatePage(pid string, content any) (models.Page, error) {
+func (s *PageStorage) CreatePage(pid string, content string) (models.Page, error) {
 	if pid == "" {
 		return models.Page{}, ErrEmptyPageID
 	}
@@ -109,33 +109,11 @@ func (s *PageStorage) CreatePage(pid string, content any) (models.Page, error) {
 		return models.Page{}, ErrPageExists
 	}
 
-	var contentStr string
-	if content == nil {
-		contentStr = ""
-	} else {
-		switch v := content.(type) {
-		case string:
-			contentStr = v
-		default:
-			b, err := json.Marshal(v)
-
-			if err != nil || string(b) == "null" {
-				contentStr = ""
-			} else {
-				contentStr = string(b)
-			}
-		}
-	}
-
-	if contentStr == "null" {
-		contentStr = ""
-	}
-
 	vid := uuid.New().String()
 
 	newVersion := models.Version{
 		ID:        vid,
-		Content:   contentStr,
+		Content:   content,
 		CreatedAt: time.Now().Unix(),
 		IsLatest:  true,
 	}

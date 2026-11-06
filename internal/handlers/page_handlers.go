@@ -17,6 +17,20 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", GetLatestVersionHandler)
 }
 
+func contentString(content any) string {
+	if str, ok := content.(string); ok {
+		return str
+	}
+	if content == nil {
+		return ""
+	}
+	b, err := json.Marshal(content)
+	if err != nil || string(b) == "null" {
+		return ""
+	}
+	return string(b)
+}
+
 func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -30,20 +44,7 @@ func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var contentStr string
-	if str, ok := input.Content.(string); ok {
-		contentStr = str
-	} else if input.Content == nil {
-		contentStr = ""
-	} else {
-		b, _ := json.Marshal(input.Content)
-		contentStr = string(b)
-		if contentStr == "null" {
-			contentStr = ""
-		}
-	}
-
-	page, err := storage.GPageStorage.CreatePage(input.PageId, contentStr)
+	page, err := storage.GPageStorage.CreatePage(input.PageId, contentString(input.Content))
 	if errors.Is(err, storage.ErrPageExists) {
 		http.Error(w, "Page already exists", http.StatusConflict)
 		return
@@ -97,20 +98,7 @@ func AddVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var contentStr string
-	if str, ok := input.Content.(string); ok {
-		contentStr = str
-	} else if input.Content == nil {
-		contentStr = ""
-	} else {
-		b, _ := json.Marshal(input.Content)
-		contentStr = string(b)
-		if contentStr == "null" {
-			contentStr = ""
-		}
-	}
-
-	newVer, ok := storage.GPageStorage.AddVersion(pid, contentStr)
+	newVer, ok := storage.GPageStorage.AddVersion(pid, contentString(input.Content))
 	if !ok {
 		http.Error(w, "Page not found", http.StatusNotFound)
 		return
