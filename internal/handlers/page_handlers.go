@@ -145,7 +145,7 @@ func GetVersionHandler(w http.ResponseWriter, r *http.Request) {
 
 	version, ok := storage.GPageStorage.GetVersion(pid, vid)
 	if !ok {
-		http.Error(w, "33 Version or Page not found", http.StatusNotFound)
+		http.Error(w, "Version not found", http.StatusNotFound)
 		return
 	}
 
@@ -163,7 +163,7 @@ func SetLatestHandler(w http.ResponseWriter, r *http.Request) {
 
 	version, ok := storage.GPageStorage.SetLatest(pid, vid)
 	if !ok {
-		http.Error(w, "1 Version or Page not found", http.StatusNotFound)
+		http.Error(w, "Version not found", http.StatusNotFound)
 		return
 	}
 
@@ -184,7 +184,7 @@ func GetLatestVersionHandler(w http.ResponseWriter, r *http.Request) {
 
 	version, ok := storage.GPageStorage.GetLatestVersion(pid)
 	if !ok {
-		http.Error(w, "2 Latest version or Page not found", http.StatusNotFound)
+		http.Error(w, "Version not found", http.StatusNotFound)
 		return
 	}
 

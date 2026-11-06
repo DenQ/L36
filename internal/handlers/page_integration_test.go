@@ -218,6 +218,34 @@ func TestSetLatestRollback(t *testing.T) {
 	}
 }
 
+func TestMissingVersionSaysVersionNotFound(t *testing.T) {
+	const pid = "missing-page-404-phrases"
+	const want = "Version not found\n"
+
+	reqVersion := httptest.NewRequest(http.MethodGet, "/api/pages/"+pid+"/versions/nope", nil)
+	reqVersion.SetPathValue("pid", pid)
+	reqVersion.SetPathValue("vid", "nope")
+	rrVersion := httptest.NewRecorder()
+	GetVersionHandler(rrVersion, reqVersion)
+	assert.Equal(t, http.StatusNotFound, rrVersion.Code)
+	assert.Equal(t, want, rrVersion.Body.String())
+
+	reqLatest := httptest.NewRequest(http.MethodPost, "/api/pages/"+pid+"/versions/nope/latest", nil)
+	reqLatest.SetPathValue("pid", pid)
+	reqLatest.SetPathValue("vid", "nope")
+	rrLatest := httptest.NewRecorder()
+	SetLatestHandler(rrLatest, reqLatest)
+	assert.Equal(t, http.StatusNotFound, rrLatest.Code)
+	assert.Equal(t, want, rrLatest.Body.String())
+
+	reqGetLatest := httptest.NewRequest(http.MethodGet, "/api/pages/"+pid+"/versions/latest", nil)
+	reqGetLatest.SetPathValue("pid", pid)
+	rrGetLatest := httptest.NewRecorder()
+	GetLatestVersionHandler(rrGetLatest, reqGetLatest)
+	assert.Equal(t, http.StatusNotFound, rrGetLatest.Code)
+	assert.Equal(t, want, rrGetLatest.Body.String())
+}
+
 func TestCreatePageRejectsEmptyID(t *testing.T) {
 	bodies := []string{
 		`{"pageId":"","content":"nope"}`,
