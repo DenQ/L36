@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"l36/internal/storage"
 	"net/http"
 )
@@ -11,9 +12,23 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/pages/{pid}", DeletePageHandler)
 	mux.HandleFunc("POST /api/pages/{pid}/versions", AddVersionHandler)
 	mux.HandleFunc("GET /api/pages/{pid}/versions", GetHistoryHandler)
-	mux.HandleFunc("GET /api/pages/{pid}/versions/{vid}", GetVersionHandler) // мы почему-то заходим сюда
+	mux.HandleFunc("GET /api/pages/{pid}/versions/{vid}", GetVersionHandler)
 	mux.HandleFunc("POST /api/pages/{pid}/versions/{vid}/latest", SetLatestHandler)
-	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", GetLatestVersionHandler) // хотя должны сюда
+	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", GetLatestVersionHandler)
+}
+
+func contentString(content any) string {
+	if str, ok := content.(string); ok {
+		return str
+	}
+	if content == nil {
+		return ""
+	}
+	b, err := json.Marshal(content)
+	if err != nil || string(b) == "null" {
+		return ""
+	}
+	return string(b)
 }
 
 func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
@@ -29,21 +44,19 @@ func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Гарантируем, что content — это строка, и не "null"
-	var contentStr string
-	if str, ok := input.Content.(string); ok {
-		contentStr = str
-	} else if input.Content == nil {
-		contentStr = ""
-	} else {
-		b, _ := json.Marshal(input.Content)
-		contentStr = string(b)
-		if contentStr == "null" {
-			contentStr = ""
-		}
+	page, err := storage.GPageStorage.CreatePage(input.PageId, contentString(input.Content))
+	if errors.Is(err, storage.ErrPageExists) {
+		http.Error(w, "Page already exists", http.StatusConflict)
+		return
 	}
-
-	page := storage.GPageStorage.CreatePage(input.PageId, contentStr)
+	if errors.Is(err, storage.ErrEmptyPageID) {
+		http.Error(w, "Missing page ID", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(page); err != nil {
@@ -85,20 +98,7 @@ func AddVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var contentStr string
-	if str, ok := input.Content.(string); ok {
-		contentStr = str
-	} else if input.Content == nil {
-		contentStr = ""
-	} else {
-		b, _ := json.Marshal(input.Content)
-		contentStr = string(b)
-		if contentStr == "null" {
-			contentStr = ""
-		}
-	}
-
-	newVer, ok := storage.GPageStorage.AddVersion(pid, contentStr)
+	newVer, ok := storage.GPageStorage.AddVersion(pid, contentString(input.Content))
 	if !ok {
 		http.Error(w, "Page not found", http.StatusNotFound)
 		return
@@ -140,9 +140,13 @@ func GetVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version, ok := storage.GPageStorage.GetVersion(pid, vid)
-	if !ok {
-		http.Error(w, "33 Version or Page not found", http.StatusNotFound)
+	version, err := storage.GPageStorage.GetVersion(pid, vid)
+	if errors.Is(err, storage.ErrVersionNotFound) {
+		http.Error(w, "Version not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Failed to restore version", http.StatusInternalServerError)
 		return
 	}
 
@@ -160,7 +164,7 @@ func SetLatestHandler(w http.ResponseWriter, r *http.Request) {
 
 	version, ok := storage.GPageStorage.SetLatest(pid, vid)
 	if !ok {
-		http.Error(w, "1 Version or Page not found", http.StatusNotFound)
+		http.Error(w, "Version not found", http.StatusNotFound)
 		return
 	}
 
@@ -179,9 +183,13 @@ func GetLatestVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version, ok := storage.GPageStorage.GetLatestVersion(pid)
-	if !ok {
-		http.Error(w, "2 Latest version or Page not found", http.StatusNotFound)
+	version, err := storage.GPageStorage.GetLatestVersion(pid)
+	if errors.Is(err, storage.ErrVersionNotFound) {
+		http.Error(w, "Version not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Failed to restore version", http.StatusInternalServerError)
 		return
 	}
 

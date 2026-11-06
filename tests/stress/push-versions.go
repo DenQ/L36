@@ -33,21 +33,18 @@ func PushVersions(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 
-	alphabet := "0123456789abcdefghijklmnopqrstuvwxyz"
-
 	start := time.Now()
 
 	for w := 0; w < workers; w++ {
 		go func(workerID int) {
 			defer wg.Done()
 
-			shardChar := string(alphabet[workerID%len(alphabet)])
-			pid := fmt.Sprintf("%s-stress-%d", shardChar, workerID)
+			pid := fmt.Sprintf("stress-%d", workerID)
 
 			pBody, _ := json.Marshal(map[string]any{"pageId": pid, "content": "Initial content"})
 			resp, err := client.Post(ts.URL+"/api/pages", "application/json", bytes.NewReader(pBody))
 			if err == nil {
-				resp.Body.Close()
+				drain(resp)
 			}
 
 			for i := 0; i < versionsPerPage; i++ {
@@ -58,7 +55,7 @@ func PushVersions(t *testing.T) {
 				vResp, err := client.Post(vUrl, "application/json", bytes.NewReader(vBody))
 
 				if err == nil {
-					vResp.Body.Close()
+					drain(vResp)
 				}
 			}
 		}(w)
@@ -72,4 +69,5 @@ func PushVersions(t *testing.T) {
 	fmt.Printf("   Total Requests (Create + Versions): %d\n", totalRequests)
 	fmt.Printf("   Duration: %v\n", duration)
 	fmt.Printf("   Real-world RPS (with Diffs): %.2f\n\n", rps)
+	recordStress("PushVersions", totalRequests, duration, rps)
 }

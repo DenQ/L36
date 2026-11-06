@@ -10,68 +10,61 @@ import (
 	"github.com/sergi/go-diff/diffmatchpatch"
 
 	"bufio"
+	"errors"
 	"hash/fnv"
+	"io"
 	"sync"
 	"time"
 )
 
 var dmp = diffmatchpatch.New()
 
-type DiffFunc func(oldContent, newContent string) string
-
 type Shard struct {
-	mu    sync.RWMutex
-	pages map[string]*models.Page
+	mu        sync.RWMutex
+	pages     map[string]*models.Page
+	diffMu    sync.RWMutex
+	diffCache map[uint64]string
 }
 
 type PageStorage struct {
-	shards   [36]*Shard
-	fastDiff DiffFunc
+	shards [36]*Shard
 }
 
-func MemoizeDiff(fn DiffFunc) DiffFunc {
-	cache := make(map[uint64]string)
-	var mu sync.RWMutex
+const maxDiffCacheEntries = 10000
 
-	return func(oldContent, newContent string) string {
-		h := fnv.New64a()
-		h.Write([]byte(oldContent))
-		h.Write([]byte(newContent))
-		key := h.Sum64()
+func (s *Shard) diff(oldContent, newContent string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(oldContent))
+	_, _ = h.Write([]byte(newContent))
+	key := h.Sum64()
 
-		mu.RLock()
-		if result, ok := cache[key]; ok {
-			mu.RUnlock()
-			return result
-		}
-		mu.RUnlock()
-
-		result := fn(oldContent, newContent)
-
-		mu.Lock()
-		if len(cache) > 10000 { // Ограничитель памяти
-			cache = make(map[uint64]string)
-		}
-		cache[key] = result
-		mu.Unlock()
-
+	s.diffMu.RLock()
+	if result, ok := s.diffCache[key]; ok {
+		s.diffMu.RUnlock()
 		return result
 	}
+	s.diffMu.RUnlock()
+
+	diffs := dmp.DiffMain(newContent, oldContent, true)
+	result := dmp.DiffToDelta(diffs)
+
+	s.diffMu.Lock()
+	if s.diffCache == nil || len(s.diffCache) > maxDiffCacheEntries {
+		s.diffCache = make(map[uint64]string)
+	}
+	s.diffCache[key] = result
+	s.diffMu.Unlock()
+
+	return result
 }
 
 func NewPageStorage() *PageStorage {
 	ps := &PageStorage{}
 
-	slowDiff := func(old, new string) string {
-		diffs := dmp.DiffMain(new, old, true)
-		return dmp.DiffToDelta(diffs)
-	}
-
-	ps.fastDiff = MemoizeDiff(slowDiff)
-
 	for i := 0; i < 36; i++ {
 		ps.shards[i] = &Shard{
-			pages: make(map[string]*models.Page),
+			pages:     make(map[string]*models.Page),
+			diffCache: make(map[uint64]string),
 		}
 	}
 
@@ -80,72 +73,47 @@ func NewPageStorage() *PageStorage {
 
 var GPageStorage = NewPageStorage()
 
-var shardTable [256]int
-
 func init() {
 	dmp.DiffTimeout = time.Millisecond * 10
+}
 
-	for i := 0; i < 256; i++ {
-		char := byte(i)
-		switch {
-		case char >= '0' && char <= '9':
-			shardTable[i] = int(char - '0')
-		case char >= 'a' && char <= 'z':
-			shardTable[i] = int(char - 'a' + 10)
-		case char >= 'A' && char <= 'Z':
-			shardTable[i] = int(char - 'A' + 10)
-		default:
-			shardTable[i] = 0
-		}
-	}
+// shardIndex is a pure function: the same pageId always lands on the same shard.
+func shardIndex(pid string) int {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(pid))
+	return int(h.Sum32() % 36)
 }
 
 func (s *PageStorage) getShard(pid string) *Shard {
-	if len(pid) == 0 {
-		return s.shards[0]
-	}
-
-	return s.shards[shardTable[pid[0]]%36]
+	return s.shards[shardIndex(pid)]
 }
 
-func (s *PageStorage) CreatePage(pid string, content any) models.Page {
+var (
+	ErrEmptyPageID     = errors.New("empty page id")
+	ErrPageExists      = errors.New("page already exists")
+	ErrVersionNotFound = errors.New("version not found")
+	ErrCorruptPatch    = errors.New("corrupt patch")
+)
+
+func (s *PageStorage) CreatePage(pid string, content string) (models.Page, error) {
+	if pid == "" {
+		return models.Page{}, ErrEmptyPageID
+	}
+
 	shard := s.getShard(pid)
 
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
-	// if page exist return her. Else better htrow error...
-	if page, ok := shard.pages[pid]; ok {
-		return *page
-	}
-
-	var contentStr string
-	if content == nil {
-		contentStr = ""
-	} else {
-		switch v := content.(type) {
-		case string:
-			contentStr = v
-		default:
-			b, err := json.Marshal(v)
-
-			if err != nil || string(b) == "null" {
-				contentStr = ""
-			} else {
-				contentStr = string(b)
-			}
-		}
-	}
-
-	if contentStr == "null" {
-		contentStr = ""
+	if _, ok := shard.pages[pid]; ok {
+		return models.Page{}, ErrPageExists
 	}
 
 	vid := uuid.New().String()
 
 	newVersion := models.Version{
 		ID:        vid,
-		Content:   contentStr,
+		Content:   content,
 		CreatedAt: time.Now().Unix(),
 		IsLatest:  true,
 	}
@@ -157,7 +125,7 @@ func (s *PageStorage) CreatePage(pid string, content any) models.Page {
 	}
 
 	shard.pages[pid] = &newPage
-	return newPage
+	return newPage, nil
 }
 
 func (s *PageStorage) DeletePage(pid string) bool {
@@ -176,45 +144,50 @@ func (s *PageStorage) DeletePage(pid string) bool {
 func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version, bool) {
 	shard := s.getShard(pid)
 
-	shard.mu.RLock()
-	page, ok := shard.pages[pid]
-	if !ok || len(page.Versions) == 0 {
+	for {
+		shard.mu.RLock()
+		page, ok := shard.pages[pid]
+		if !ok || len(page.Versions) == 0 {
+			shard.mu.RUnlock()
+			return models.Version{}, false
+		}
+		tail := page.Versions[len(page.Versions)-1]
+		tailID := tail.ID
+		oldContent := tail.Content
 		shard.mu.RUnlock()
-		return models.Version{}, false
+
+		delta := shard.diff(oldContent, newContent)
+
+		shard.mu.Lock()
+		page, ok = shard.pages[pid]
+		if !ok || len(page.Versions) == 0 {
+			shard.mu.Unlock()
+			return models.Version{}, false
+		}
+		lastIdx := len(page.Versions) - 1
+		if page.Versions[lastIdx].ID != tailID {
+			shard.mu.Unlock()
+			continue
+		}
+
+		oldLatest := &page.Versions[lastIdx]
+		oldLatest.Content = ""
+		oldLatest.Patch = delta
+		oldLatest.IsLatest = false
+
+		newVer := models.Version{
+			ID:        uuid.New().String(),
+			ParentID:  oldLatest.ID,
+			Content:   newContent,
+			CreatedAt: time.Now().Unix(),
+			IsLatest:  true,
+		}
+
+		page.Versions = append(page.Versions, newVer)
+		page.LatestIndex = len(page.Versions) - 1
+		shard.mu.Unlock()
+		return newVer, true
 	}
-
-	oldContent := page.Versions[len(page.Versions)-1].Content
-	shard.mu.RUnlock()
-
-	delta := s.fastDiff(oldContent, newContent)
-
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-
-	page, ok = shard.pages[pid]
-	if !ok || len(page.Versions) == 0 {
-		return models.Version{}, false
-	}
-
-	lastIdx := len(page.Versions) - 1
-	oldLatest := &page.Versions[lastIdx]
-
-	oldLatest.Content = ""
-	oldLatest.Patch = delta
-	oldLatest.IsLatest = false
-
-	newVer := models.Version{
-		ID:        uuid.New().String(),
-		ParentID:  oldLatest.ID,
-		Content:   newContent,
-		CreatedAt: time.Now().Unix(),
-		IsLatest:  true,
-	}
-
-	page.Versions = append(page.Versions, newVer)
-	page.LatestIndex = len(page.Versions) - 1
-
-	return newVer, true
 }
 
 func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
@@ -233,14 +206,14 @@ func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
 	return history, true
 }
 
-func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) {
+func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, error) {
 	shard := s.getShard(pid)
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
 
 	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
-		return models.Version{}, false
+		return models.Version{}, ErrVersionNotFound
 	}
 
 	var targetIdx int = -1
@@ -252,12 +225,12 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) 
 	}
 
 	if targetIdx == -1 {
-		return models.Version{}, false
+		return models.Version{}, ErrVersionNotFound
 	}
 
 	lastIdx := len(page.Versions) - 1
 	if targetIdx == lastIdx {
-		return page.Versions[targetIdx], true
+		return page.Versions[targetIdx], nil
 	}
 
 	currentText := page.Versions[lastIdx].Content
@@ -268,13 +241,16 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) 
 			continue
 		}
 
-		diffs, _ := dmp.DiffFromDelta(currentText, patchStr)
+		diffs, err := dmp.DiffFromDelta(currentText, patchStr)
+		if err != nil {
+			return models.Version{}, fmt.Errorf("%w: %s", ErrCorruptPatch, err.Error())
+		}
 		currentText = dmp.DiffText2(diffs)
 	}
 
 	result := page.Versions[targetIdx]
 	result.Content = currentText
-	return result, true
+	return result, nil
 }
 
 func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
@@ -302,13 +278,13 @@ func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
 	return models.Version{}, false
 }
 
-func (s *PageStorage) GetLatestVersion(pid string) (models.Version, bool) {
+func (s *PageStorage) GetLatestVersion(pid string) (models.Version, error) {
 	shard := s.getShard(pid)
 	shard.mu.RLock()
 	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
 		shard.mu.RUnlock()
-		return models.Version{}, false
+		return models.Version{}, ErrVersionNotFound
 	}
 	targetVid := page.Versions[page.LatestIndex].ID
 	shard.mu.RUnlock()
@@ -321,7 +297,7 @@ func (s *Shard) dump(filePath string) error {
 	defer s.mu.RUnlock()
 
 	if len(s.pages) == 0 {
-		return nil
+		return removeShardFiles(filePath)
 	}
 
 	tmpFile := filePath + ".tmp"
@@ -342,6 +318,15 @@ func (s *Shard) dump(filePath string) error {
 	return os.Rename(tmpFile, filePath)
 }
 
+func removeShardFiles(filePath string) error {
+	for _, path := range []string{filePath, filePath + ".tmp"} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Shard) load(filePath string) error {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -355,18 +340,66 @@ func (s *Shard) load(filePath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	scanner := bufio.NewScanner(f)
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	return s.readPages(f, maxShardLineSize)
+}
 
-	for scanner.Scan() {
+// maxShardLineSize is the largest JSON line Load will accept.
+// A longer line is an error. The page is not cut and stored in part.
+const maxShardLineSize = 64 << 20
+
+func (s *Shard) readPages(r io.Reader, maxLine int) error {
+	br := bufio.NewReader(r)
+	for {
+		line, err := readShardLine(br, maxLine)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
 		var page models.Page
-		if err := json.Unmarshal(scanner.Bytes(), &page); err != nil {
+		if err := json.Unmarshal(line, &page); err != nil {
 			return err
 		}
 		s.pages[page.ID] = &page
 	}
-	return scanner.Err()
+}
+
+func readShardLine(r *bufio.Reader, max int) ([]byte, error) {
+	var buf []byte
+	for {
+		frag, err := r.ReadSlice('\n')
+		if len(frag) > 0 {
+			if len(buf)+len(frag) > max {
+				return nil, fmt.Errorf("shard line exceeds %d bytes", max)
+			}
+			buf = append(buf, frag...)
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err == io.EOF {
+			if len(buf) == 0 {
+				return nil, io.EOF
+			}
+			return trimLineEnding(buf), nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return trimLineEnding(buf), nil
+	}
+}
+
+func trimLineEnding(b []byte) []byte {
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
+	if len(b) > 0 && b[len(b)-1] == '\r' {
+		b = b[:len(b)-1]
+	}
+	return b
 }
 
 func (s *PageStorage) Dump(dataDir string) error {

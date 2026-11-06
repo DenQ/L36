@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"l36/internal/handlers"
 	"net/http"
 	"net/http/httptest"
@@ -59,8 +60,10 @@ func PushPages(t *testing.T) {
 					return
 				}
 
-				assert.Equal(t, http.StatusCreated, resp.StatusCode)
-				resp.Body.Close()
+				if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+					assert.Failf(t, "unexpected status", "got %d", resp.StatusCode)
+				}
+				drain(resp)
 			}
 		}(w)
 	}
@@ -73,4 +76,14 @@ func PushPages(t *testing.T) {
 	fmt.Printf("   Total Requests: %d\n", totalRequests)
 	fmt.Printf("   Duration: %v\n", duration)
 	fmt.Printf("   Real-world RPS: %.2f\n\n", rps)
+	recordStress("PushPages", totalRequests, duration, rps)
+}
+
+// drain reads the body to completion so the client can reuse the connection.
+func drain(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
 }

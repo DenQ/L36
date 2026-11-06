@@ -17,7 +17,7 @@ test:
 	go test -v ./internal/**
 
 stress:
-	go test -v ./tests/stress/**
+	go test -v -count=1 ./tests/stress
 
 bench:
 	go test -v -bench=. ./internal/storage

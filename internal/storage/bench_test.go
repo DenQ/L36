@@ -9,10 +9,9 @@ func BenchmarkStoragePerformance(b *testing.B) {
 	s := GPageStorage
 
 	pids := make([]string, 36)
-	symbols := "0123456789abcdefghijklmnopqrstuvwxyz"
-	for i, char := range symbols {
-		pid := string(char) + "-bench-page"
-		s.CreatePage(pid, "initial content")
+	for i := 0; i < len(pids); i++ {
+		pid := fmt.Sprintf("bench-page-%d", i)
+		_, _ = s.CreatePage(pid, "initial content")
 		pids[i] = pid
 	}
 

@@ -32,3 +32,4 @@ logs/
 
 # --- Тесты ---
 coverage.out
+tests/stress/history.jsonl

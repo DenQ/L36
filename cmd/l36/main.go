@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -42,11 +43,21 @@ func main() {
 	}
 	loadDuration := time.Since(startLoad)
 
+	quit := make(chan struct{})
+	var autosave sync.WaitGroup
+	autosave.Add(1)
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		for range ticker.C {
-			if err := store.Dump(dataDir); err != nil {
-				log.Printf("Auto-save failed: %v", err)
+		defer autosave.Done()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := store.Dump(dataDir); err != nil {
+					log.Printf("Auto-save failed: %v", err)
+				}
+			case <-quit:
+				return
 			}
 		}
 	}()
@@ -60,11 +71,9 @@ func main() {
 	mux := http.NewServeMux()
 	handlers.RegisterRoutes(mux)
 
-	// wrappedHandler := handlers.Logger(mux)
-
 	srv := &http.Server{
-		Addr: addr,
-		// Handler: wrappedHandler,
+		Addr:    addr,
+		Handler: mux,
 	}
 
 	stop := make(chan os.Signal, 1)
@@ -85,6 +94,8 @@ func main() {
 
 	// Graceful Shutdown
 	<-stop
+	close(quit)
+	autosave.Wait()
 	fmt.Println("\n🛑 Stop signal received. Terminating active sessions...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -3,12 +3,17 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
-	"l36/internal/models"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
+
+	"l36/internal/models"
+	"l36/internal/storage"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFullPageFlow(t *testing.T) {
@@ -119,7 +124,7 @@ func TestDeletePage(t *testing.T) {
 }
 
 func TestConcurrentVersions(t *testing.T) {
-	testPID := "test-page-12345"
+	testPID := fmt.Sprintf("test-page-concurrent-%d", time.Now().UnixNano())
 	content := map[string]string{"text": "Initial"}
 	pBody, _ := json.Marshal(map[string]any{
 		"content": content,
@@ -127,6 +132,7 @@ func TestConcurrentVersions(t *testing.T) {
 	})
 	rrP := httptest.NewRecorder()
 	CreatePageHandler(rrP, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(pBody)))
+	assert.Equal(t, http.StatusCreated, rrP.Code, rrP.Body.String())
 
 	var page models.Page
 	json.Unmarshal(rrP.Body.Bytes(), &page)
@@ -158,15 +164,31 @@ func TestConcurrentVersions(t *testing.T) {
 	var history []models.Version
 	json.Unmarshal(rrH.Body.Bytes(), &history)
 
-	assert.Len(t, history, workers+1)
+	assert.Len(t, history, workers+1, rrH.Body.String())
 
 	latestCount := 0
+	got := make(map[string]int, len(history))
 	for _, v := range history {
 		if v.IsLatest {
 			latestCount++
 		}
+		reqV := httptest.NewRequest(http.MethodGet, "/api/pages/"+pid+"/versions/"+v.ID, nil)
+		reqV.SetPathValue("pid", pid)
+		reqV.SetPathValue("vid", v.ID)
+		rrV := httptest.NewRecorder()
+		GetVersionHandler(rrV, reqV)
+		assert.Equal(t, http.StatusOK, rrV.Code)
+
+		var restored models.Version
+		assert.NoError(t, json.Unmarshal(rrV.Body.Bytes(), &restored))
+		got[restored.Content]++
 	}
 	assert.Equal(t, 1, latestCount, "В любой момент времени должна быть только одна актуальная версия")
+
+	assert.Equal(t, 1, got[`{"text":"Initial"}`])
+	for i := 0; i < workers; i++ {
+		assert.Equal(t, 1, got[fmt.Sprintf(`{"val":%d}`, i)])
+	}
 }
 
 func TestSetLatestRollback(t *testing.T) {
@@ -213,4 +235,71 @@ func TestSetLatestRollback(t *testing.T) {
 			assert.False(t, v.IsLatest, "V2 должна потерять статус Latest")
 		}
 	}
+}
+
+func TestMissingVersionSaysVersionNotFound(t *testing.T) {
+	const pid = "missing-page-404-phrases"
+	const want = "Version not found\n"
+
+	reqVersion := httptest.NewRequest(http.MethodGet, "/api/pages/"+pid+"/versions/nope", nil)
+	reqVersion.SetPathValue("pid", pid)
+	reqVersion.SetPathValue("vid", "nope")
+	rrVersion := httptest.NewRecorder()
+	GetVersionHandler(rrVersion, reqVersion)
+	assert.Equal(t, http.StatusNotFound, rrVersion.Code)
+	assert.Equal(t, want, rrVersion.Body.String())
+
+	reqLatest := httptest.NewRequest(http.MethodPost, "/api/pages/"+pid+"/versions/nope/latest", nil)
+	reqLatest.SetPathValue("pid", pid)
+	reqLatest.SetPathValue("vid", "nope")
+	rrLatest := httptest.NewRecorder()
+	SetLatestHandler(rrLatest, reqLatest)
+	assert.Equal(t, http.StatusNotFound, rrLatest.Code)
+	assert.Equal(t, want, rrLatest.Body.String())
+
+	reqGetLatest := httptest.NewRequest(http.MethodGet, "/api/pages/"+pid+"/versions/latest", nil)
+	reqGetLatest.SetPathValue("pid", pid)
+	rrGetLatest := httptest.NewRecorder()
+	GetLatestVersionHandler(rrGetLatest, reqGetLatest)
+	assert.Equal(t, http.StatusNotFound, rrGetLatest.Code)
+	assert.Equal(t, want, rrGetLatest.Body.String())
+}
+
+func TestCreatePageRejectsEmptyID(t *testing.T) {
+	bodies := []string{
+		`{"pageId":"","content":"nope"}`,
+		`{"content":"nope"}`,
+	}
+
+	for _, body := range bodies {
+		req := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(body))
+		rr := httptest.NewRecorder()
+		CreatePageHandler(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	}
+
+	_, found := storage.GPageStorage.GetHistory("")
+	assert.False(t, found)
+}
+
+func TestCreatePageConflict(t *testing.T) {
+	const pid = "handler-create-duplicate"
+	first := `{"pageId":"` + pid + `","content":"original"}`
+	second := `{"pageId":"` + pid + `","content":"replacement"}`
+
+	req1 := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(first))
+	rr1 := httptest.NewRecorder()
+	CreatePageHandler(rr1, req1)
+	assert.Equal(t, http.StatusCreated, rr1.Code)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(second))
+	rr2 := httptest.NewRecorder()
+	CreatePageHandler(rr2, req2)
+	assert.Equal(t, http.StatusConflict, rr2.Code)
+	assert.Equal(t, "Page already exists\n", rr2.Body.String())
+
+	history, found := storage.GPageStorage.GetHistory(pid)
+	assert.True(t, found)
+	assert.Equal(t, "original", history[0].Content)
 }
