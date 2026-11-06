@@ -37,6 +37,7 @@ func TestFullPageFlow(t *testing.T) {
 
 	assert.NotEmpty(t, pid)
 	assert.True(t, page1.Versions[0].IsLatest)
+	assert.Equal(t, `{"text":"Version 1"}`, page1.Versions[0].Content)
 
 	content2 := map[string]string{"text": "Version 2"}
 	body2, _ := json.Marshal(map[string]any{"content": content2})
@@ -52,6 +53,7 @@ func TestFullPageFlow(t *testing.T) {
 	json.Unmarshal(rr2.Body.Bytes(), &ver2)
 	assert.True(t, ver2.IsLatest)
 	assert.Equal(t, vid1, ver2.ParentID)
+	assert.Equal(t, `{"text":"Version 2"}`, ver2.Content)
 
 	req3 := httptest.NewRequest("GET", "/api/pages/"+pid+"/versions", nil)
 	req3.SetPathValue("pid", pid)
@@ -73,6 +75,7 @@ func TestFullPageFlow(t *testing.T) {
 	var v1Fetched models.Version
 	json.Unmarshal(rr4.Body.Bytes(), &v1Fetched)
 	assert.Equal(t, vid1, v1Fetched.ID)
+	assert.Equal(t, `{"text":"Version 1"}`, v1Fetched.Content)
 
 	req5 := httptest.NewRequest("POST", "/api/pages/"+pid+"/versions/"+vid1+"/latest", nil)
 	req5.SetPathValue("pid", pid)
