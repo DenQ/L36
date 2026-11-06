@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"l36/internal/models"
+	"l36/internal/storage"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,7 +19,7 @@ func TestE2EPageFlow(t *testing.T) {
 	t.Parallel()
 	testPID := "test-page-36"
 	mux := http.NewServeMux()
-	RegisterRoutes(mux)
+	RegisterRoutes(mux, storage.NewPageStorage())
 
 	ts := httptest.NewServer(Logger(mux))
 	defer ts.Close()
@@ -72,7 +73,7 @@ func TestE2EPageFlow(t *testing.T) {
 func TestHTTPRoutesCoverGaps(t *testing.T) {
 	pid := fmt.Sprintf("http-gap-%d", time.Now().UnixNano())
 	mux := http.NewServeMux()
-	RegisterRoutes(mux)
+	RegisterRoutes(mux, storage.NewPageStorage())
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 	client := ts.Client()

@@ -16,7 +16,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func newHandler() *Handler {
+	return &Handler{store: storage.NewPageStorage()}
+}
+
 func TestFullPageFlow(t *testing.T) {
+	h := newHandler()
 	testPID := "test-page-1"
 	content1 := map[string]string{"text": "Version 1"}
 	body, _ := json.Marshal(map[string]any{
@@ -26,7 +31,7 @@ func TestFullPageFlow(t *testing.T) {
 
 	req1 := httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(body))
 	rr1 := httptest.NewRecorder()
-	CreatePageHandler(rr1, req1)
+	h.CreatePageHandler(rr1, req1)
 
 	assert.Equal(t, http.StatusCreated, rr1.Code)
 
@@ -45,7 +50,7 @@ func TestFullPageFlow(t *testing.T) {
 	req2 := httptest.NewRequest("POST", "/api/pages/"+pid+"/versions", bytes.NewBuffer(body2))
 	req2.SetPathValue("pid", pid)
 	rr2 := httptest.NewRecorder()
-	AddVersionHandler(rr2, req2)
+	h.AddVersionHandler(rr2, req2)
 
 	assert.Equal(t, http.StatusCreated, rr2.Code)
 
@@ -58,7 +63,7 @@ func TestFullPageFlow(t *testing.T) {
 	req3 := httptest.NewRequest("GET", "/api/pages/"+pid+"/versions", nil)
 	req3.SetPathValue("pid", pid)
 	rr3 := httptest.NewRecorder()
-	GetHistoryHandler(rr3, req3)
+	h.GetHistoryHandler(rr3, req3)
 
 	var history []models.Version
 	json.Unmarshal(rr3.Body.Bytes(), &history)
@@ -70,7 +75,7 @@ func TestFullPageFlow(t *testing.T) {
 	req4.SetPathValue("pid", pid)
 	req4.SetPathValue("vid", vid1)
 	rr4 := httptest.NewRecorder()
-	GetVersionHandler(rr4, req4)
+	h.GetVersionHandler(rr4, req4)
 
 	var v1Fetched models.Version
 	json.Unmarshal(rr4.Body.Bytes(), &v1Fetched)
@@ -81,14 +86,14 @@ func TestFullPageFlow(t *testing.T) {
 	req5.SetPathValue("pid", pid)
 	req5.SetPathValue("vid", vid1)
 	rr5 := httptest.NewRecorder()
-	SetLatestHandler(rr5, req5)
+	h.SetLatestHandler(rr5, req5)
 
 	assert.Equal(t, http.StatusOK, rr5.Code)
 
 	req6 := httptest.NewRequest("GET", "/api/pages/"+pid+"/versions", nil)
 	req6.SetPathValue("pid", pid)
 	rr6 := httptest.NewRecorder()
-	GetHistoryHandler(rr6, req6)
+	h.GetHistoryHandler(rr6, req6)
 
 	json.Unmarshal(rr6.Body.Bytes(), &history)
 	assert.True(t, history[0].IsLatest, "V1 снова актуальна")
@@ -96,6 +101,7 @@ func TestFullPageFlow(t *testing.T) {
 }
 
 func TestDeletePage(t *testing.T) {
+	h := newHandler()
 	testPID := "test-page-1234"
 	content := map[string]string{"text": "To be deleted"}
 	body, _ := json.Marshal(map[string]any{
@@ -105,7 +111,7 @@ func TestDeletePage(t *testing.T) {
 
 	reqCreate := httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(body))
 	rrCreate := httptest.NewRecorder()
-	CreatePageHandler(rrCreate, reqCreate)
+	h.CreatePageHandler(rrCreate, reqCreate)
 
 	var page models.Page
 	json.Unmarshal(rrCreate.Body.Bytes(), &page)
@@ -114,19 +120,20 @@ func TestDeletePage(t *testing.T) {
 	reqDelete := httptest.NewRequest("DELETE", "/api/pages/"+pid, nil)
 	reqDelete.SetPathValue("pid", pid)
 	rrDelete := httptest.NewRecorder()
-	DeletePageHandler(rrDelete, reqDelete)
+	h.DeletePageHandler(rrDelete, reqDelete)
 
 	assert.Equal(t, http.StatusNoContent, rrDelete.Code, "Должен быть статус 204")
 
 	reqGet := httptest.NewRequest("GET", "/api/pages/"+pid+"/versions", nil)
 	reqGet.SetPathValue("pid", pid)
 	rrGet := httptest.NewRecorder()
-	GetHistoryHandler(rrGet, reqGet)
+	h.GetHistoryHandler(rrGet, reqGet)
 
 	assert.Equal(t, http.StatusNotFound, rrGet.Code, "После удаления страница не должна находиться")
 }
 
 func TestConcurrentVersions(t *testing.T) {
+	h := newHandler()
 	testPID := fmt.Sprintf("test-page-concurrent-%d", time.Now().UnixNano())
 	content := map[string]string{"text": "Initial"}
 	pBody, _ := json.Marshal(map[string]any{
@@ -134,7 +141,7 @@ func TestConcurrentVersions(t *testing.T) {
 		"pageId":  testPID,
 	})
 	rrP := httptest.NewRecorder()
-	CreatePageHandler(rrP, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(pBody)))
+	h.CreatePageHandler(rrP, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(pBody)))
 	assert.Equal(t, http.StatusCreated, rrP.Code, rrP.Body.String())
 
 	var page models.Page
@@ -153,7 +160,7 @@ func TestConcurrentVersions(t *testing.T) {
 
 			req := httptest.NewRequest("POST", "/api/pages/"+pid+"/versions", bytes.NewBuffer(b))
 			req.SetPathValue("pid", pid)
-			AddVersionHandler(httptest.NewRecorder(), req)
+			h.AddVersionHandler(httptest.NewRecorder(), req)
 		}(i)
 	}
 
@@ -162,7 +169,7 @@ func TestConcurrentVersions(t *testing.T) {
 	reqH := httptest.NewRequest("GET", "/api/pages/"+pid+"/versions", nil)
 	reqH.SetPathValue("pid", pid)
 	rrH := httptest.NewRecorder()
-	GetHistoryHandler(rrH, reqH)
+	h.GetHistoryHandler(rrH, reqH)
 
 	var history []models.Version
 	json.Unmarshal(rrH.Body.Bytes(), &history)
@@ -179,7 +186,7 @@ func TestConcurrentVersions(t *testing.T) {
 		reqV.SetPathValue("pid", pid)
 		reqV.SetPathValue("vid", v.ID)
 		rrV := httptest.NewRecorder()
-		GetVersionHandler(rrV, reqV)
+		h.GetVersionHandler(rrV, reqV)
 		assert.Equal(t, http.StatusOK, rrV.Code)
 
 		var restored models.Version
@@ -195,12 +202,13 @@ func TestConcurrentVersions(t *testing.T) {
 }
 
 func TestSetLatestRollback(t *testing.T) {
+	h := newHandler()
 	pID := "rollback-test-id"
 	content1 := "First Strategic Data"
 	body1, _ := json.Marshal(map[string]any{"pageId": pID, "content": content1})
 
 	rr1 := httptest.NewRecorder()
-	CreatePageHandler(rr1, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(body1)))
+	h.CreatePageHandler(rr1, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(body1)))
 
 	var page models.Page
 	json.Unmarshal(rr1.Body.Bytes(), &page)
@@ -211,20 +219,20 @@ func TestSetLatestRollback(t *testing.T) {
 
 	req2 := httptest.NewRequest("POST", "/api/pages/"+pID+"/versions", bytes.NewBuffer(body2))
 	req2.SetPathValue("pid", pID)
-	AddVersionHandler(httptest.NewRecorder(), req2)
+	h.AddVersionHandler(httptest.NewRecorder(), req2)
 
 	reqL := httptest.NewRequest("POST", "/api/pages/"+pID+"/versions/"+v1ID+"/latest", nil)
 	reqL.SetPathValue("pid", pID)
 	reqL.SetPathValue("vid", v1ID)
 	rrL := httptest.NewRecorder()
 
-	SetLatestHandler(rrL, reqL)
+	h.SetLatestHandler(rrL, reqL)
 	assert.Equal(t, http.StatusOK, rrL.Code)
 
 	reqH := httptest.NewRequest("GET", "/api/pages/"+pID+"/versions", nil)
 	reqH.SetPathValue("pid", pID)
 	rrH := httptest.NewRecorder()
-	GetHistoryHandler(rrH, reqH)
+	h.GetHistoryHandler(rrH, reqH)
 
 	var history []models.Version
 	json.Unmarshal(rrH.Body.Bytes(), &history)
@@ -241,6 +249,7 @@ func TestSetLatestRollback(t *testing.T) {
 }
 
 func TestMissingVersionSaysVersionNotFound(t *testing.T) {
+	h := newHandler()
 	const pid = "missing-page-404-phrases"
 	const want = "Version not found\n"
 
@@ -248,7 +257,7 @@ func TestMissingVersionSaysVersionNotFound(t *testing.T) {
 	reqVersion.SetPathValue("pid", pid)
 	reqVersion.SetPathValue("vid", "nope")
 	rrVersion := httptest.NewRecorder()
-	GetVersionHandler(rrVersion, reqVersion)
+	h.GetVersionHandler(rrVersion, reqVersion)
 	assert.Equal(t, http.StatusNotFound, rrVersion.Code)
 	assert.Equal(t, want, rrVersion.Body.String())
 
@@ -256,19 +265,20 @@ func TestMissingVersionSaysVersionNotFound(t *testing.T) {
 	reqLatest.SetPathValue("pid", pid)
 	reqLatest.SetPathValue("vid", "nope")
 	rrLatest := httptest.NewRecorder()
-	SetLatestHandler(rrLatest, reqLatest)
+	h.SetLatestHandler(rrLatest, reqLatest)
 	assert.Equal(t, http.StatusNotFound, rrLatest.Code)
 	assert.Equal(t, want, rrLatest.Body.String())
 
 	reqGetLatest := httptest.NewRequest(http.MethodGet, "/api/pages/"+pid+"/versions/latest", nil)
 	reqGetLatest.SetPathValue("pid", pid)
 	rrGetLatest := httptest.NewRecorder()
-	GetLatestVersionHandler(rrGetLatest, reqGetLatest)
+	h.GetLatestVersionHandler(rrGetLatest, reqGetLatest)
 	assert.Equal(t, http.StatusNotFound, rrGetLatest.Code)
 	assert.Equal(t, want, rrGetLatest.Body.String())
 }
 
 func TestCreatePageRejectsEmptyID(t *testing.T) {
+	h := newHandler()
 	bodies := []string{
 		`{"pageId":"","content":"nope"}`,
 		`{"content":"nope"}`,
@@ -277,32 +287,33 @@ func TestCreatePageRejectsEmptyID(t *testing.T) {
 	for _, body := range bodies {
 		req := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(body))
 		rr := httptest.NewRecorder()
-		CreatePageHandler(rr, req)
+		h.CreatePageHandler(rr, req)
 
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
 	}
 
-	_, found := storage.GPageStorage.GetHistory("")
+	_, found := h.store.GetHistory("")
 	assert.False(t, found)
 }
 
 func TestCreatePageConflict(t *testing.T) {
+	h := newHandler()
 	const pid = "handler-create-duplicate"
 	first := `{"pageId":"` + pid + `","content":"original"}`
 	second := `{"pageId":"` + pid + `","content":"replacement"}`
 
 	req1 := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(first))
 	rr1 := httptest.NewRecorder()
-	CreatePageHandler(rr1, req1)
+	h.CreatePageHandler(rr1, req1)
 	assert.Equal(t, http.StatusCreated, rr1.Code)
 
 	req2 := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(second))
 	rr2 := httptest.NewRecorder()
-	CreatePageHandler(rr2, req2)
+	h.CreatePageHandler(rr2, req2)
 	assert.Equal(t, http.StatusConflict, rr2.Code)
 	assert.Equal(t, "Page already exists\n", rr2.Body.String())
 
-	history, found := storage.GPageStorage.GetHistory(pid)
+	history, found := h.store.GetHistory(pid)
 	assert.True(t, found)
 	assert.Equal(t, "original", history[0].Content)
 }

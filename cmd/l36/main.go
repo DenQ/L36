@@ -35,7 +35,7 @@ func main() {
 		fmt.Println("Warning: .env file not found, using default environment")
 	}
 
-	store := storage.GPageStorage
+	store := storage.NewPageStorage()
 
 	startLoad := time.Now()
 	if err := store.Load(dataDir); err != nil {
@@ -69,7 +69,7 @@ func main() {
 	addr := ":" + port
 
 	mux := http.NewServeMux()
-	handlers.RegisterRoutes(mux)
+	handlers.RegisterRoutes(mux, store)
 
 	srv := &http.Server{
 		Addr:    addr,
