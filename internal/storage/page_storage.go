@@ -144,45 +144,50 @@ func (s *PageStorage) DeletePage(pid string) bool {
 func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version, bool) {
 	shard := s.getShard(pid)
 
-	shard.mu.RLock()
-	page, ok := shard.pages[pid]
-	if !ok || len(page.Versions) == 0 {
+	for {
+		shard.mu.RLock()
+		page, ok := shard.pages[pid]
+		if !ok || len(page.Versions) == 0 {
+			shard.mu.RUnlock()
+			return models.Version{}, false
+		}
+		tail := page.Versions[len(page.Versions)-1]
+		tailID := tail.ID
+		oldContent := tail.Content
 		shard.mu.RUnlock()
-		return models.Version{}, false
+
+		delta := shard.diff(oldContent, newContent)
+
+		shard.mu.Lock()
+		page, ok = shard.pages[pid]
+		if !ok || len(page.Versions) == 0 {
+			shard.mu.Unlock()
+			return models.Version{}, false
+		}
+		lastIdx := len(page.Versions) - 1
+		if page.Versions[lastIdx].ID != tailID {
+			shard.mu.Unlock()
+			continue
+		}
+
+		oldLatest := &page.Versions[lastIdx]
+		oldLatest.Content = ""
+		oldLatest.Patch = delta
+		oldLatest.IsLatest = false
+
+		newVer := models.Version{
+			ID:        uuid.New().String(),
+			ParentID:  oldLatest.ID,
+			Content:   newContent,
+			CreatedAt: time.Now().Unix(),
+			IsLatest:  true,
+		}
+
+		page.Versions = append(page.Versions, newVer)
+		page.LatestIndex = len(page.Versions) - 1
+		shard.mu.Unlock()
+		return newVer, true
 	}
-
-	oldContent := page.Versions[len(page.Versions)-1].Content
-	shard.mu.RUnlock()
-
-	delta := shard.diff(oldContent, newContent)
-
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-
-	page, ok = shard.pages[pid]
-	if !ok || len(page.Versions) == 0 {
-		return models.Version{}, false
-	}
-
-	lastIdx := len(page.Versions) - 1
-	oldLatest := &page.Versions[lastIdx]
-
-	oldLatest.Content = ""
-	oldLatest.Patch = delta
-	oldLatest.IsLatest = false
-
-	newVer := models.Version{
-		ID:        uuid.New().String(),
-		ParentID:  oldLatest.ID,
-		Content:   newContent,
-		CreatedAt: time.Now().Unix(),
-		IsLatest:  true,
-	}
-
-	page.Versions = append(page.Versions, newVer)
-	page.LatestIndex = len(page.Versions) - 1
-
-	return newVer, true
 }
 
 func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {

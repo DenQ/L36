@@ -3,10 +3,12 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"l36/internal/models"
 	"l36/internal/storage"
@@ -122,7 +124,7 @@ func TestDeletePage(t *testing.T) {
 }
 
 func TestConcurrentVersions(t *testing.T) {
-	testPID := "test-page-12345"
+	testPID := fmt.Sprintf("test-page-concurrent-%d", time.Now().UnixNano())
 	content := map[string]string{"text": "Initial"}
 	pBody, _ := json.Marshal(map[string]any{
 		"content": content,
@@ -130,6 +132,7 @@ func TestConcurrentVersions(t *testing.T) {
 	})
 	rrP := httptest.NewRecorder()
 	CreatePageHandler(rrP, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(pBody)))
+	assert.Equal(t, http.StatusCreated, rrP.Code, rrP.Body.String())
 
 	var page models.Page
 	json.Unmarshal(rrP.Body.Bytes(), &page)
@@ -161,15 +164,31 @@ func TestConcurrentVersions(t *testing.T) {
 	var history []models.Version
 	json.Unmarshal(rrH.Body.Bytes(), &history)
 
-	assert.Len(t, history, workers+1)
+	assert.Len(t, history, workers+1, rrH.Body.String())
 
 	latestCount := 0
+	got := make(map[string]int, len(history))
 	for _, v := range history {
 		if v.IsLatest {
 			latestCount++
 		}
+		reqV := httptest.NewRequest(http.MethodGet, "/api/pages/"+pid+"/versions/"+v.ID, nil)
+		reqV.SetPathValue("pid", pid)
+		reqV.SetPathValue("vid", v.ID)
+		rrV := httptest.NewRecorder()
+		GetVersionHandler(rrV, reqV)
+		assert.Equal(t, http.StatusOK, rrV.Code)
+
+		var restored models.Version
+		assert.NoError(t, json.Unmarshal(rrV.Body.Bytes(), &restored))
+		got[restored.Content]++
 	}
 	assert.Equal(t, 1, latestCount, "В любой момент времени должна быть только одна актуальная версия")
+
+	assert.Equal(t, 1, got[`{"text":"Initial"}`])
+	for i := 0; i < workers; i++ {
+		assert.Equal(t, 1, got[fmt.Sprintf(`{"val":%d}`, i)])
+	}
 }
 
 func TestSetLatestRollback(t *testing.T) {
