@@ -147,47 +147,66 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 	for {
 		shard.mu.RLock()
 		page, ok := shard.pages[pid]
-		if !ok || len(page.Versions) == 0 {
+		if !ok || len(page.Versions) == 0 || !validLatest(page) {
 			shard.mu.RUnlock()
 			return models.Version{}, false
 		}
-		tail := page.Versions[len(page.Versions)-1]
-		tailID := tail.ID
-		oldContent := tail.Content
+		head := page.Versions[page.LatestIndex]
+		headID := head.ID
+		oldContent, err := headContent(page, headID)
 		shard.mu.RUnlock()
+		if err != nil {
+			return models.Version{}, false
+		}
 
 		delta := shard.diff(oldContent, newContent)
 
 		shard.mu.Lock()
 		page, ok = shard.pages[pid]
-		if !ok || len(page.Versions) == 0 {
+		if !ok || len(page.Versions) == 0 || !validLatest(page) {
 			shard.mu.Unlock()
 			return models.Version{}, false
 		}
-		lastIdx := len(page.Versions) - 1
-		if page.Versions[lastIdx].ID != tailID {
+		if page.Versions[page.LatestIndex].ID != headID {
 			shard.mu.Unlock()
 			continue
 		}
 
-		oldLatest := &page.Versions[lastIdx]
-		oldLatest.Content = ""
-		oldLatest.Patch = delta
-		oldLatest.IsLatest = false
+		parent := &page.Versions[page.LatestIndex]
+		parent.Content = ""
+		parent.IsLatest = false
 
 		newVer := models.Version{
 			ID:        uuid.New().String(),
-			ParentID:  oldLatest.ID,
+			ParentID:  parent.ID,
 			Content:   newContent,
+			Patch:     delta,
 			CreatedAt: time.Now().Unix(),
 			IsLatest:  true,
 		}
-
 		page.Versions = append(page.Versions, newVer)
 		page.LatestIndex = len(page.Versions) - 1
 		shard.mu.Unlock()
+
+		newVer.Patch = ""
 		return newVer, true
 	}
+}
+
+func validLatest(page *models.Page) bool {
+	return page.LatestIndex >= 0 && page.LatestIndex < len(page.Versions)
+}
+
+func headContent(page *models.Page, id string) (string, error) {
+	if versionIsLeaf(page, id) {
+		idx := versionIndex(page, id)
+		return page.Versions[idx].Content, nil
+	}
+	restored, err := restoreLocked(page, id)
+	if err != nil {
+		return "", err
+	}
+	return restored.Content, nil
 }
 
 func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
@@ -215,42 +234,108 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, error)
 	if !ok || len(page.Versions) == 0 {
 		return models.Version{}, ErrVersionNotFound
 	}
-
-	var targetIdx int = -1
-	for i, v := range page.Versions {
-		if v.ID == vid {
-			targetIdx = i
-			break
-		}
+	version, err := restoreLocked(page, vid)
+	if err != nil {
+		return models.Version{}, err
 	}
+	version.Patch = ""
+	return version, nil
+}
 
-	if targetIdx == -1 {
+func restoreLocked(page *models.Page, vid string) (models.Version, error) {
+	target := versionIndex(page, vid)
+	if target < 0 {
 		return models.Version{}, ErrVersionNotFound
 	}
-
-	lastIdx := len(page.Versions) - 1
-	if targetIdx == lastIdx {
-		return page.Versions[targetIdx], nil
+	if versionIsLeaf(page, vid) {
+		return page.Versions[target], nil
 	}
 
-	currentText := page.Versions[lastIdx].Content
+	leaf := findLeaf(page, vid)
+	if leaf < 0 {
+		return models.Version{}, fmt.Errorf("%w: no leaf under %s", ErrCorruptPatch, vid)
+	}
 
-	for i := lastIdx; i > targetIdx; i-- {
-		patchStr := page.Versions[i-1].Patch
-		if patchStr == "" {
+	text := page.Versions[leaf].Content
+	cur := leaf
+	for steps := 0; page.Versions[cur].ID != vid; steps++ {
+		if steps > len(page.Versions) {
+			return models.Version{}, fmt.Errorf("%w: cycle under %s", ErrCorruptPatch, vid)
+		}
+		next, err := applyReverse(text, page.Versions[cur].Patch)
+		if err != nil {
+			return models.Version{}, err
+		}
+		text = next
+		parent := versionIndex(page, page.Versions[cur].ParentID)
+		if parent < 0 {
+			return models.Version{}, fmt.Errorf("%w: missing parent of %s", ErrCorruptPatch, page.Versions[cur].ID)
+		}
+		cur = parent
+	}
+
+	result := page.Versions[target]
+	result.Content = text
+	return result, nil
+}
+
+func versionIndex(page *models.Page, id string) int {
+	for i := range page.Versions {
+		if page.Versions[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func versionIsLeaf(page *models.Page, id string) bool {
+	for i := range page.Versions {
+		if page.Versions[i].ParentID == id {
+			return false
+		}
+	}
+	return true
+}
+
+func findLeaf(page *models.Page, id string) int {
+	kids := make(map[string][]int)
+	for i := range page.Versions {
+		parent := page.Versions[i].ParentID
+		if parent == "" {
 			continue
 		}
-
-		diffs, err := dmp.DiffFromDelta(currentText, patchStr)
-		if err != nil {
-			return models.Version{}, fmt.Errorf("%w: %s", ErrCorruptPatch, err.Error())
-		}
-		currentText = dmp.DiffText2(diffs)
+		kids[parent] = append(kids[parent], i)
 	}
 
-	result := page.Versions[targetIdx]
-	result.Content = currentText
-	return result, nil
+	stack := []string{id}
+	seen := make(map[string]bool)
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		children := kids[cur]
+		if len(children) == 0 {
+			return versionIndex(page, cur)
+		}
+		for _, child := range children {
+			stack = append(stack, page.Versions[child].ID)
+		}
+	}
+	return -1
+}
+
+func applyReverse(text, patch string) (string, error) {
+	if patch == "" {
+		return text, nil
+	}
+	diffs, err := dmp.DiffFromDelta(text, patch)
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", ErrCorruptPatch, err.Error())
+	}
+	return dmp.DiffText2(diffs), nil
 }
 
 func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
@@ -265,13 +350,18 @@ func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
 
 	for i := range page.Versions {
 		if page.Versions[i].ID == vid {
-			page.Versions[page.LatestIndex].IsLatest = false
-
+			if page.LatestIndex >= 0 && page.LatestIndex < len(page.Versions) {
+				page.Versions[page.LatestIndex].IsLatest = false
+			}
 			page.LatestIndex = i
-
 			page.Versions[i].IsLatest = true
 
-			return page.Versions[i], true
+			restored, err := restoreLocked(page, vid)
+			if err != nil {
+				return models.Version{}, false
+			}
+			restored.Patch = ""
+			return restored, true
 		}
 	}
 
@@ -362,8 +452,34 @@ func (s *Shard) readPages(r io.Reader, maxLine int) error {
 		if err := json.Unmarshal(line, &page); err != nil {
 			return err
 		}
+		migrateLinearPatches(&page)
 		s.pages[page.ID] = &page
 	}
+}
+
+// migrateLinearPatches rewrites a chain saved by the old layout, where the patch sat on the parent and only the tail held text.
+func migrateLinearPatches(page *models.Page) {
+	n := len(page.Versions)
+	if n < 2 || page.Versions[n-1].Patch != "" {
+		return
+	}
+	nonempty := 0
+	earlierPatch := false
+	for i, v := range page.Versions {
+		if v.Content != "" {
+			nonempty++
+		}
+		if i < n-1 && v.Patch != "" {
+			earlierPatch = true
+		}
+	}
+	if nonempty > 1 || !earlierPatch {
+		return
+	}
+	for i := n - 1; i >= 1; i-- {
+		page.Versions[i].Patch = page.Versions[i-1].Patch
+	}
+	page.Versions[0].Patch = ""
 }
 
 func readShardLine(r *bufio.Reader, max int) ([]byte, error) {

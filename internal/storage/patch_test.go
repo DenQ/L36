@@ -32,7 +32,7 @@ func TestPatchIntegrityChain(t *testing.T) {
 	latestVersion := history2[len(history2)-1]
 	assert.True(t, latestVersion.IsLatest)
 	assert.NotEmpty(t, latestVersion.Content)
-	assert.Empty(t, latestVersion.Patch)
+	assert.NotEmpty(t, latestVersion.Patch)
 }
 
 func TestPatchEdgeCases(t *testing.T) {

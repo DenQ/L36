@@ -11,7 +11,7 @@ POST :: /api/pages/{PID}/versions/
 <- 201 { pageId: uiid; versionId: uiid; content: JSON; ... }
 
 GET :: /api/pages/{PID}/versions/
-<- 200 [{ content: JSON, ... }, ...]
+<- 200 [{ versionId, parentId, dt, latest }, ...]
 
 GET :: /api/pages/{PID}/versions/latest
 <- 200 { pageId: uiid; content: JSON }

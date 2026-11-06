@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -42,13 +44,14 @@ func main() {
 		log.Printf("Failed to load shards: %v", err)
 	}
 	loadDuration := time.Since(startLoad)
+	saveEvery := saveInterval(os.Getenv("SAVE_INTERVAL_SECONDS"))
 
 	quit := make(chan struct{})
 	var autosave sync.WaitGroup
 	autosave.Add(1)
 	go func() {
 		defer autosave.Done()
-		ticker := time.NewTicker(time.Minute)
+		ticker := time.NewTicker(saveEvery)
 		defer ticker.Stop()
 		for {
 			select {
@@ -84,7 +87,8 @@ func main() {
 		fmt.Printf("\n [%s] STORAGE ENGINE STARTED", "L36")
 		fmt.Printf("\n [%s] %d SHARDS INITIALIZED IN %v", "SYSTEM", 36, loadDuration)
 		fmt.Printf("\n [%s] READY FOR HIGH LOAD", "STATUS")
-		fmt.Printf("\n [%s] PORT: %s\n\n", "INFO", port)
+		fmt.Printf("\n [%s] PORT: %s", "INFO", port)
+		fmt.Printf("\n [%s] SAVE EVERY: %s\n\n", "INFO", saveEvery)
 		fmt.Printf("🚀 L-36 Instance online at http://localhost%s\n", addr)
 
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -113,4 +117,18 @@ func main() {
 	fmt.Printf("Dump completed in %v\n", time.Since(start))
 
 	fmt.Println("👋 L-36 secure shutdown complete. Standby.")
+}
+
+// saveInterval reads SAVE_INTERVAL_SECONDS. An empty value means 60 seconds.
+func saveInterval(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Minute
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds <= 0 {
+		log.Printf("SAVE_INTERVAL_SECONDS=%q is invalid, using 60", raw)
+		return time.Minute
+	}
+	return time.Duration(seconds) * time.Second
 }
