@@ -32,6 +32,10 @@ type PageStorage struct {
 
 const maxDiffCacheEntries = 10000
 
+// snapshotEvery is the longest gap between versions that keep their full text.
+// The root and every leaf keep theirs as well, so a restore walks at most this many patches.
+const snapshotEvery = 10
+
 func (s *Shard) diff(oldContent, newContent string) string {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(oldContent))
@@ -116,6 +120,7 @@ func (s *PageStorage) CreatePage(pid string, content string) (models.Page, error
 		Content:   content,
 		CreatedAt: time.Now().Unix(),
 		IsLatest:  true,
+		Snapshot:  true,
 	}
 
 	newPage := models.Page{
@@ -173,8 +178,13 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 		}
 
 		parent := &page.Versions[page.LatestIndex]
-		parent.Content = ""
 		parent.IsLatest = false
+		if anchorSnapshot(page, parent.ID) {
+			parent.Snapshot = true
+		} else {
+			parent.Content = ""
+			parent.Snapshot = false
+		}
 
 		newVer := models.Version{
 			ID:        uuid.New().String(),
@@ -183,12 +193,14 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 			Patch:     delta,
 			CreatedAt: time.Now().Unix(),
 			IsLatest:  true,
+			Snapshot:  true,
 		}
 		page.Versions = append(page.Versions, newVer)
 		page.LatestIndex = len(page.Versions) - 1
 		shard.mu.Unlock()
 
 		newVer.Patch = ""
+		newVer.Snapshot = false
 		return newVer, true
 	}
 }
@@ -198,10 +210,6 @@ func validLatest(page *models.Page) bool {
 }
 
 func headContent(page *models.Page, id string) (string, error) {
-	if versionIsLeaf(page, id) {
-		idx := versionIndex(page, id)
-		return page.Versions[idx].Content, nil
-	}
 	restored, err := restoreLocked(page, id)
 	if err != nil {
 		return "", err
@@ -239,6 +247,7 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, error)
 		return models.Version{}, err
 	}
 	version.Patch = ""
+	version.Snapshot = false
 	return version, nil
 }
 
@@ -247,17 +256,17 @@ func restoreLocked(page *models.Page, vid string) (models.Version, error) {
 	if target < 0 {
 		return models.Version{}, ErrVersionNotFound
 	}
-	if versionIsLeaf(page, vid) {
+
+	base := nearestBase(page, vid)
+	if base < 0 {
+		return models.Version{}, fmt.Errorf("%w: no snapshot under %s", ErrCorruptPatch, vid)
+	}
+	if base == target {
 		return page.Versions[target], nil
 	}
 
-	leaf := findLeaf(page, vid)
-	if leaf < 0 {
-		return models.Version{}, fmt.Errorf("%w: no leaf under %s", ErrCorruptPatch, vid)
-	}
-
-	text := page.Versions[leaf].Content
-	cur := leaf
+	text := page.Versions[base].Content
+	cur := base
 	for steps := 0; page.Versions[cur].ID != vid; steps++ {
 		if steps > len(page.Versions) {
 			return models.Version{}, fmt.Errorf("%w: cycle under %s", ErrCorruptPatch, vid)
@@ -279,6 +288,34 @@ func restoreLocked(page *models.Page, vid string) (models.Version, error) {
 	return result, nil
 }
 
+// anchorSnapshot reports whether this version keeps its full text after a child is added.
+// The root always does. Further down a path, every snapshotEvery-th version does.
+func anchorSnapshot(page *models.Page, id string) bool {
+	idx := versionIndex(page, id)
+	if idx < 0 {
+		return false
+	}
+	if page.Versions[idx].ParentID == "" {
+		return true
+	}
+	return versionDepth(page, id)%snapshotEvery == 0
+}
+
+func versionDepth(page *models.Page, id string) int {
+	depth := 0
+	seen := make(map[string]bool)
+	for id != "" && !seen[id] {
+		seen[id] = true
+		idx := versionIndex(page, id)
+		if idx < 0 {
+			break
+		}
+		depth++
+		id = page.Versions[idx].ParentID
+	}
+	return depth
+}
+
 func versionIndex(page *models.Page, id string) int {
 	for i := range page.Versions {
 		if page.Versions[i].ID == id {
@@ -288,16 +325,7 @@ func versionIndex(page *models.Page, id string) int {
 	return -1
 }
 
-func versionIsLeaf(page *models.Page, id string) bool {
-	for i := range page.Versions {
-		if page.Versions[i].ParentID == id {
-			return false
-		}
-	}
-	return true
-}
-
-func findLeaf(page *models.Page, id string) int {
+func childIndexes(page *models.Page) map[string][]int {
 	kids := make(map[string][]int)
 	for i := range page.Versions {
 		parent := page.Versions[i].ParentID
@@ -306,23 +334,31 @@ func findLeaf(page *models.Page, id string) int {
 		}
 		kids[parent] = append(kids[parent], i)
 	}
+	return kids
+}
 
-	stack := []string{id}
-	seen := make(map[string]bool)
-	for len(stack) > 0 {
-		cur := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if seen[cur] {
+// nearestBase is the closest version at or below id whose Content is stored in full.
+// A snapshot qualifies, and so does a leaf, which always holds its own text.
+func nearestBase(page *models.Page, id string) int {
+	start := versionIndex(page, id)
+	if start < 0 {
+		return -1
+	}
+	kids := childIndexes(page)
+	queue := []int{start}
+	seen := make([]bool, len(page.Versions))
+	for len(queue) > 0 {
+		idx := queue[0]
+		queue = queue[1:]
+		if seen[idx] {
 			continue
 		}
-		seen[cur] = true
-		children := kids[cur]
-		if len(children) == 0 {
-			return versionIndex(page, cur)
+		seen[idx] = true
+		children := kids[page.Versions[idx].ID]
+		if page.Versions[idx].Snapshot || len(children) == 0 {
+			return idx
 		}
-		for _, child := range children {
-			stack = append(stack, page.Versions[child].ID)
-		}
+		queue = append(queue, children...)
 	}
 	return -1
 }
@@ -361,6 +397,7 @@ func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
 				return models.Version{}, false
 			}
 			restored.Patch = ""
+			restored.Snapshot = false
 			return restored, true
 		}
 	}
@@ -453,6 +490,7 @@ func (s *Shard) readPages(r io.Reader, maxLine int) error {
 			return err
 		}
 		migrateLinearPatches(&page)
+		markSnapshots(&page)
 		s.pages[page.ID] = &page
 	}
 }
@@ -480,6 +518,21 @@ func migrateLinearPatches(page *models.Page) {
 		page.Versions[i].Patch = page.Versions[i-1].Patch
 	}
 	page.Versions[0].Patch = ""
+}
+
+// markSnapshots flags versions that already store full text, so a shard written
+// before the snapshot field still restores. An empty leaf counts: its text is "".
+func markSnapshots(page *models.Page) {
+	kids := childIndexes(page)
+	for i := range page.Versions {
+		v := &page.Versions[i]
+		if v.Snapshot {
+			continue
+		}
+		if v.Content != "" || len(kids[v.ID]) == 0 {
+			v.Snapshot = true
+		}
+	}
 }
 
 func readShardLine(r *bufio.Reader, max int) ([]byte, error) {
