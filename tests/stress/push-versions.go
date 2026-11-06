@@ -47,7 +47,7 @@ func PushVersions(t *testing.T) {
 			pBody, _ := json.Marshal(map[string]any{"pageId": pid, "content": "Initial content"})
 			resp, err := client.Post(ts.URL+"/api/pages", "application/json", bytes.NewReader(pBody))
 			if err == nil {
-				resp.Body.Close()
+				drain(resp)
 			}
 
 			for i := 0; i < versionsPerPage; i++ {
@@ -58,7 +58,7 @@ func PushVersions(t *testing.T) {
 				vResp, err := client.Post(vUrl, "application/json", bytes.NewReader(vBody))
 
 				if err == nil {
-					vResp.Body.Close()
+					drain(vResp)
 				}
 			}
 		}(w)
