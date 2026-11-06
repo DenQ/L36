@@ -11,6 +11,7 @@ import (
 
 	"bufio"
 	"hash/fnv"
+	"io"
 	"sync"
 	"time"
 )
@@ -346,18 +347,66 @@ func (s *Shard) load(filePath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	scanner := bufio.NewScanner(f)
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	return s.readPages(f, maxShardLineSize)
+}
 
-	for scanner.Scan() {
+// maxShardLineSize is the largest JSON line Load will accept.
+// A longer line is an error. The page is not cut and stored in part.
+const maxShardLineSize = 64 << 20
+
+func (s *Shard) readPages(r io.Reader, maxLine int) error {
+	br := bufio.NewReader(r)
+	for {
+		line, err := readShardLine(br, maxLine)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
 		var page models.Page
-		if err := json.Unmarshal(scanner.Bytes(), &page); err != nil {
+		if err := json.Unmarshal(line, &page); err != nil {
 			return err
 		}
 		s.pages[page.ID] = &page
 	}
-	return scanner.Err()
+}
+
+func readShardLine(r *bufio.Reader, max int) ([]byte, error) {
+	var buf []byte
+	for {
+		frag, err := r.ReadSlice('\n')
+		if len(frag) > 0 {
+			if len(buf)+len(frag) > max {
+				return nil, fmt.Errorf("shard line exceeds %d bytes", max)
+			}
+			buf = append(buf, frag...)
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err == io.EOF {
+			if len(buf) == 0 {
+				return nil, io.EOF
+			}
+			return trimLineEnding(buf), nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return trimLineEnding(buf), nil
+	}
+}
+
+func trimLineEnding(b []byte) []byte {
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
+	if len(b) > 0 && b[len(b)-1] == '\r' {
+		b = b[:len(b)-1]
+	}
+	return b
 }
 
 func (s *PageStorage) Dump(dataDir string) error {
