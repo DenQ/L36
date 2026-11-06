@@ -19,61 +19,52 @@ import (
 
 var dmp = diffmatchpatch.New()
 
-type DiffFunc func(oldContent, newContent string) string
-
 type Shard struct {
-	mu    sync.RWMutex
-	pages map[string]*models.Page
+	mu        sync.RWMutex
+	pages     map[string]*models.Page
+	diffMu    sync.RWMutex
+	diffCache map[uint64]string
 }
 
 type PageStorage struct {
-	shards   [36]*Shard
-	fastDiff DiffFunc
+	shards [36]*Shard
 }
 
-func MemoizeDiff(fn DiffFunc) DiffFunc {
-	cache := make(map[uint64]string)
-	var mu sync.RWMutex
+const maxDiffCacheEntries = 10000
 
-	return func(oldContent, newContent string) string {
-		h := fnv.New64a()
-		h.Write([]byte(oldContent))
-		h.Write([]byte(newContent))
-		key := h.Sum64()
+func (s *Shard) diff(oldContent, newContent string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(oldContent))
+	_, _ = h.Write([]byte(newContent))
+	key := h.Sum64()
 
-		mu.RLock()
-		if result, ok := cache[key]; ok {
-			mu.RUnlock()
-			return result
-		}
-		mu.RUnlock()
-
-		result := fn(oldContent, newContent)
-
-		mu.Lock()
-		if len(cache) > 10000 { // Ограничитель памяти
-			cache = make(map[uint64]string)
-		}
-		cache[key] = result
-		mu.Unlock()
-
+	s.diffMu.RLock()
+	if result, ok := s.diffCache[key]; ok {
+		s.diffMu.RUnlock()
 		return result
 	}
+	s.diffMu.RUnlock()
+
+	diffs := dmp.DiffMain(newContent, oldContent, true)
+	result := dmp.DiffToDelta(diffs)
+
+	s.diffMu.Lock()
+	if s.diffCache == nil || len(s.diffCache) > maxDiffCacheEntries {
+		s.diffCache = make(map[uint64]string)
+	}
+	s.diffCache[key] = result
+	s.diffMu.Unlock()
+
+	return result
 }
 
 func NewPageStorage() *PageStorage {
 	ps := &PageStorage{}
 
-	slowDiff := func(old, new string) string {
-		diffs := dmp.DiffMain(new, old, true)
-		return dmp.DiffToDelta(diffs)
-	}
-
-	ps.fastDiff = MemoizeDiff(slowDiff)
-
 	for i := 0; i < 36; i++ {
 		ps.shards[i] = &Shard{
-			pages: make(map[string]*models.Page),
+			pages:     make(map[string]*models.Page),
+			diffCache: make(map[uint64]string),
 		}
 	}
 
@@ -185,7 +176,7 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 	oldContent := page.Versions[len(page.Versions)-1].Content
 	shard.mu.RUnlock()
 
-	delta := s.fastDiff(oldContent, newContent)
+	delta := shard.diff(oldContent, newContent)
 
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
