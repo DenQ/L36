@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"l36/internal/handlers"
+	"l36/internal/storage"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -16,7 +17,7 @@ import (
 
 func PushVersions(t *testing.T) {
 	mux := http.NewServeMux()
-	handlers.RegisterRoutes(mux)
+	handlers.RegisterRoutes(mux, storage.NewPageStorage())
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 

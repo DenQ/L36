@@ -7,14 +7,19 @@ import (
 	"net/http"
 )
 
-func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/pages", CreatePageHandler)
-	mux.HandleFunc("DELETE /api/pages/{pid}", DeletePageHandler)
-	mux.HandleFunc("POST /api/pages/{pid}/versions", AddVersionHandler)
-	mux.HandleFunc("GET /api/pages/{pid}/versions", GetHistoryHandler)
-	mux.HandleFunc("GET /api/pages/{pid}/versions/{vid}", GetVersionHandler)
-	mux.HandleFunc("POST /api/pages/{pid}/versions/{vid}/latest", SetLatestHandler)
-	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", GetLatestVersionHandler)
+type Handler struct {
+	store *storage.PageStorage
+}
+
+func RegisterRoutes(mux *http.ServeMux, store *storage.PageStorage) {
+	h := &Handler{store: store}
+	mux.HandleFunc("POST /api/pages", h.CreatePageHandler)
+	mux.HandleFunc("DELETE /api/pages/{pid}", h.DeletePageHandler)
+	mux.HandleFunc("POST /api/pages/{pid}/versions", h.AddVersionHandler)
+	mux.HandleFunc("GET /api/pages/{pid}/versions", h.GetHistoryHandler)
+	mux.HandleFunc("GET /api/pages/{pid}/versions/{vid}", h.GetVersionHandler)
+	mux.HandleFunc("POST /api/pages/{pid}/versions/{vid}/latest", h.SetLatestHandler)
+	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", h.GetLatestVersionHandler)
 }
 
 func contentString(content any) string {
@@ -31,7 +36,7 @@ func contentString(content any) string {
 	return string(b)
 }
 
-func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	var input struct {
@@ -44,7 +49,7 @@ func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, err := storage.GPageStorage.CreatePage(input.PageId, contentString(input.Content))
+	page, err := h.store.CreatePage(input.PageId, contentString(input.Content))
 	if errors.Is(err, storage.ErrPageExists) {
 		http.Error(w, "Page already exists", http.StatusConflict)
 		return
@@ -65,14 +70,14 @@ func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func DeletePageHandler(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) DeletePageHandler(w http.ResponseWriter, r *http.Request) {
 	pid := r.PathValue("pid")
 	if pid == "" {
 		http.Error(w, "Missing page ID", http.StatusBadRequest)
 		return
 	}
 
-	if ok := storage.GPageStorage.DeletePage(pid); ok {
+	if ok := h.store.DeletePage(pid); ok {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -80,7 +85,7 @@ func DeletePageHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Page not found", http.StatusNotFound)
 }
 
-func AddVersionHandler(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) AddVersionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	pid := r.PathValue("pid")
@@ -98,7 +103,7 @@ func AddVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newVer, ok := storage.GPageStorage.AddVersion(pid, contentString(input.Content))
+	newVer, ok := h.store.AddVersion(pid, contentString(input.Content))
 	if !ok {
 		http.Error(w, "Page not found", http.StatusNotFound)
 		return
@@ -108,7 +113,7 @@ func AddVersionHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(newVer)
 }
 
-func GetHistoryHandler(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	pid := r.PathValue("pid")
@@ -117,7 +122,7 @@ func GetHistoryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, ok := storage.GPageStorage.GetHistory(pid)
+	history, ok := h.store.GetHistory(pid)
 	if !ok {
 		http.Error(w, "Page not found", http.StatusNotFound)
 		return
@@ -129,7 +134,7 @@ func GetHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func GetVersionHandler(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetVersionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	pid := r.PathValue("pid")
@@ -140,7 +145,7 @@ func GetVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version, err := storage.GPageStorage.GetVersion(pid, vid)
+	version, err := h.store.GetVersion(pid, vid)
 	if errors.Is(err, storage.ErrVersionNotFound) {
 		http.Error(w, "Version not found", http.StatusNotFound)
 		return
@@ -156,13 +161,13 @@ func GetVersionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func SetLatestHandler(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) SetLatestHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	pid := r.PathValue("pid")
 	vid := r.PathValue("vid")
 
-	version, ok := storage.GPageStorage.SetLatest(pid, vid)
+	version, ok := h.store.SetLatest(pid, vid)
 	if !ok {
 		http.Error(w, "Version not found", http.StatusNotFound)
 		return
@@ -174,7 +179,7 @@ func SetLatestHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func GetLatestVersionHandler(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) GetLatestVersionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	pid := r.PathValue("pid")
@@ -183,7 +188,7 @@ func GetLatestVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version, err := storage.GPageStorage.GetLatestVersion(pid)
+	version, err := h.store.GetLatestVersion(pid)
 	if errors.Is(err, storage.ErrVersionNotFound) {
 		http.Error(w, "Version not found", http.StatusNotFound)
 		return

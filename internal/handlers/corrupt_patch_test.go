@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"l36/internal/models"
-	"l36/internal/storage"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -38,13 +37,15 @@ func TestGetVersionCorruptPatchReturns500(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, json.NewEncoder(f).Encode(page))
 	assert.NoError(t, f.Close())
-	assert.NoError(t, storage.GPageStorage.Load(dir))
+
+	api := newHandler()
+	assert.NoError(t, api.store.Load(dir))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/pages/"+pid+"/versions/v1", nil)
 	req.SetPathValue("pid", pid)
 	req.SetPathValue("vid", "v1")
 	rr := httptest.NewRecorder()
-	GetVersionHandler(rr, req)
+	api.GetVersionHandler(rr, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 	assert.Equal(t, "Failed to restore version\n", rr.Body.String())
