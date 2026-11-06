@@ -1,7 +1,14 @@
 BINARY_NAME=l36
 MAIN_PACKAGE=./cmd/l36
 
-.PHONY: build run test race cover clean dev
+.PHONY: build run test race cover clean dev seed view
+
+seed:
+	go run ./cmd/seed
+
+view:
+	@test -n "$(N)" || (echo "usage: make view N=0" && exit 1)
+	go run ./cmd/view -n $(N)
 
 build:
 	mkdir -p bin

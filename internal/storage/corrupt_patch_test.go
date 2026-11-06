@@ -18,7 +18,7 @@ func TestGetVersionRejectsCorruptPatch(t *testing.T) {
 
 	shard := GPageStorage.getShard(pid)
 	shard.mu.Lock()
-	shard.pages[pid].Versions[0].Patch = "not-a-valid-delta"
+	shard.pages[pid].Versions[1].Patch = "not-a-valid-delta"
 	shard.mu.Unlock()
 
 	got, err := GPageStorage.GetVersion(pid, history[0].ID)

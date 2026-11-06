@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"l36/internal/models"
 	"l36/internal/storage"
 	"net/http"
 )
@@ -128,7 +129,16 @@ func (h *Handler) GetHistoryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := json.NewEncoder(w).Encode(history); err != nil {
+	items := make([]models.VersionListItem, len(history))
+	for i, v := range history {
+		items[i] = models.VersionListItem{
+			ID:        v.ID,
+			ParentID:  v.ParentID,
+			CreatedAt: v.CreatedAt,
+			IsLatest:  v.IsLatest,
+		}
+	}
+	if err := json.NewEncoder(w).Encode(items); err != nil {
 		http.Error(w, "JSON encoding error", http.StatusInternalServerError)
 		return
 	}

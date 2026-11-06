@@ -317,3 +317,103 @@ func TestCreatePageConflict(t *testing.T) {
 	assert.True(t, found)
 	assert.Equal(t, "original", history[0].Content)
 }
+
+func TestHistoryListIsFlat(t *testing.T) {
+	h := newHandler()
+	create := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(`{"pageId":"flat-tree","content":"A"}`))
+	rrCreate := httptest.NewRecorder()
+	h.CreatePageHandler(rrCreate, create)
+	assert.Equal(t, http.StatusCreated, rrCreate.Code)
+
+	var page models.Page
+	assert.NoError(t, json.Unmarshal(rrCreate.Body.Bytes(), &page))
+
+	add := httptest.NewRequest(http.MethodPost, "/api/pages/flat-tree/versions", bytes.NewBufferString(`{"content":"B"}`))
+	add.SetPathValue("pid", "flat-tree")
+	rrAdd := httptest.NewRecorder()
+	h.AddVersionHandler(rrAdd, add)
+	assert.Equal(t, http.StatusCreated, rrAdd.Code)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/pages/flat-tree/versions", nil)
+	req.SetPathValue("pid", "flat-tree")
+	rr := httptest.NewRecorder()
+	h.GetHistoryHandler(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.NotContains(t, rr.Body.String(), `"patch"`)
+	assert.NotContains(t, rr.Body.String(), `"content"`)
+
+	var items []models.VersionListItem
+	assert.NoError(t, json.Unmarshal(rr.Body.Bytes(), &items))
+	assert.Len(t, items, 2)
+	assert.Equal(t, page.Versions[0].ID, items[1].ParentID)
+	assert.True(t, items[1].IsLatest)
+	assert.False(t, items[0].IsLatest)
+}
+
+func TestHistoryListShowsBothBranches(t *testing.T) {
+	h := newHandler()
+	create := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(`{"pageId":"flat-branches","content":"A"}`))
+	rrCreate := httptest.NewRecorder()
+	h.CreatePageHandler(rrCreate, create)
+	assert.Equal(t, http.StatusCreated, rrCreate.Code)
+
+	var page models.Page
+	assert.NoError(t, json.Unmarshal(rrCreate.Body.Bytes(), &page))
+	rootID := page.Versions[0].ID
+
+	addB := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"B"}`))
+	addB.SetPathValue("pid", "flat-branches")
+	rrB := httptest.NewRecorder()
+	h.AddVersionHandler(rrB, addB)
+	assert.Equal(t, http.StatusCreated, rrB.Code)
+	var b models.Version
+	assert.NoError(t, json.Unmarshal(rrB.Body.Bytes(), &b))
+
+	addC := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"C"}`))
+	addC.SetPathValue("pid", "flat-branches")
+	rrC := httptest.NewRecorder()
+	h.AddVersionHandler(rrC, addC)
+	assert.Equal(t, http.StatusCreated, rrC.Code)
+
+	move := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions/"+b.ID+"/latest", nil)
+	move.SetPathValue("pid", "flat-branches")
+	move.SetPathValue("vid", b.ID)
+	rrMove := httptest.NewRecorder()
+	h.SetLatestHandler(rrMove, move)
+	assert.Equal(t, http.StatusOK, rrMove.Code)
+	var moved models.Version
+	assert.NoError(t, json.Unmarshal(rrMove.Body.Bytes(), &moved))
+	assert.Equal(t, "B", moved.Content)
+
+	addBA := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"BA"}`))
+	addBA.SetPathValue("pid", "flat-branches")
+	rrBA := httptest.NewRecorder()
+	h.AddVersionHandler(rrBA, addBA)
+	assert.Equal(t, http.StatusCreated, rrBA.Code)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/pages/flat-branches/versions", nil)
+	req.SetPathValue("pid", "flat-branches")
+	rr := httptest.NewRecorder()
+	h.GetHistoryHandler(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.NotContains(t, rr.Body.String(), `"patch"`)
+	assert.NotContains(t, rr.Body.String(), `"content"`)
+
+	var items []models.VersionListItem
+	assert.NoError(t, json.Unmarshal(rr.Body.Bytes(), &items))
+	assert.Len(t, items, 4)
+
+	childrenOfB := 0
+	var root models.VersionListItem
+	for _, item := range items {
+		if item.ID == rootID {
+			root = item
+		}
+		if item.ParentID == b.ID {
+			childrenOfB++
+		}
+	}
+	assert.Empty(t, root.ParentID)
+	assert.False(t, root.IsLatest)
+	assert.Equal(t, 2, childrenOfB)
+}

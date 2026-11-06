@@ -23,8 +23,8 @@ func TestGetVersionCorruptPatchReturns500(t *testing.T) {
 		ID:          pid,
 		LatestIndex: 1,
 		Versions: []models.Version{
-			{ID: "v1", Patch: "not-a-valid-delta"},
-			{ID: "v2", Content: secret, IsLatest: true},
+			{ID: "v1"},
+			{ID: "v2", ParentID: "v1", Content: secret, Patch: "not-a-valid-delta", IsLatest: true},
 		},
 	}
 
