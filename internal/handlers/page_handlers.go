@@ -11,9 +11,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/pages/{pid}", DeletePageHandler)
 	mux.HandleFunc("POST /api/pages/{pid}/versions", AddVersionHandler)
 	mux.HandleFunc("GET /api/pages/{pid}/versions", GetHistoryHandler)
-	mux.HandleFunc("GET /api/pages/{pid}/versions/{vid}", GetVersionHandler) // мы почему-то заходим сюда
+	mux.HandleFunc("GET /api/pages/{pid}/versions/{vid}", GetVersionHandler)
 	mux.HandleFunc("POST /api/pages/{pid}/versions/{vid}/latest", SetLatestHandler)
-	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", GetLatestVersionHandler) // хотя должны сюда
+	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", GetLatestVersionHandler)
 }
 
 func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +29,6 @@ func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Гарантируем, что content — это строка, и не "null"
 	var contentStr string
 	if str, ok := input.Content.(string); ok {
 		contentStr = str
