@@ -33,16 +33,13 @@ func PushVersions(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 
-	alphabet := "0123456789abcdefghijklmnopqrstuvwxyz"
-
 	start := time.Now()
 
 	for w := 0; w < workers; w++ {
 		go func(workerID int) {
 			defer wg.Done()
 
-			shardChar := string(alphabet[workerID%len(alphabet)])
-			pid := fmt.Sprintf("%s-stress-%d", shardChar, workerID)
+			pid := fmt.Sprintf("stress-%d", workerID)
 
 			pBody, _ := json.Marshal(map[string]any{"pageId": pid, "content": "Initial content"})
 			resp, err := client.Post(ts.URL+"/api/pages", "application/json", bytes.NewReader(pBody))

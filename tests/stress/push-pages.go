@@ -37,13 +37,11 @@ func PushPages(t *testing.T) {
 	wg.Add(workers)
 
 	const poolSize = 1000
-	alphabet := "0123456789abcdefghijklmnopqrstuvwxyz"
 	payloadPool := make([][]byte, poolSize)
 	for i := 0; i < poolSize; i++ {
-		shardChar := alphabet[i%len(alphabet)]
 		p := map[string]any{
 			"content": fmt.Sprintf("stress test content variant %d - %s", i, uuid.New().String()),
-			"pageId":  fmt.Sprintf("%c-page-%d", shardChar, i%len(alphabet)),
+			"pageId":  fmt.Sprintf("page-%d", i%36),
 		}
 		payloadPool[i], _ = json.Marshal(p)
 	}

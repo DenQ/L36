@@ -80,32 +80,19 @@ func NewPageStorage() *PageStorage {
 
 var GPageStorage = NewPageStorage()
 
-var shardTable [256]int
-
 func init() {
 	dmp.DiffTimeout = time.Millisecond * 10
+}
 
-	for i := 0; i < 256; i++ {
-		char := byte(i)
-		switch {
-		case char >= '0' && char <= '9':
-			shardTable[i] = int(char - '0')
-		case char >= 'a' && char <= 'z':
-			shardTable[i] = int(char - 'a' + 10)
-		case char >= 'A' && char <= 'Z':
-			shardTable[i] = int(char - 'A' + 10)
-		default:
-			shardTable[i] = 0
-		}
-	}
+// shardIndex is a pure function: the same pageId always lands on the same shard.
+func shardIndex(pid string) int {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(pid))
+	return int(h.Sum32() % 36)
 }
 
 func (s *PageStorage) getShard(pid string) *Shard {
-	if len(pid) == 0 {
-		return s.shards[0]
-	}
-
-	return s.shards[shardTable[pid[0]]%36]
+	return s.shards[shardIndex(pid)]
 }
 
 func (s *PageStorage) CreatePage(pid string, content any) models.Page {
