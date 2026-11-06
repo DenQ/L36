@@ -292,7 +292,7 @@ func (s *Shard) dump(filePath string) error {
 	defer s.mu.RUnlock()
 
 	if len(s.pages) == 0 {
-		return nil
+		return removeShardFiles(filePath)
 	}
 
 	tmpFile := filePath + ".tmp"
@@ -311,6 +311,15 @@ func (s *Shard) dump(filePath string) error {
 	f.Sync()
 	f.Close()
 	return os.Rename(tmpFile, filePath)
+}
+
+func removeShardFiles(filePath string) error {
+	for _, path := range []string{filePath, filePath + ".tmp"} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Shard) load(filePath string) error {

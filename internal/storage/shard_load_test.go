@@ -3,6 +3,7 @@ package storage
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,4 +63,28 @@ func TestLoadLineBeyondTenMegabytes(t *testing.T) {
 
 	assert.NoError(t, s.load(path))
 	assert.Equal(t, content, s.pages["big"].Versions[0].Content)
+}
+
+func TestDumpEmptyShardRemovesFile(t *testing.T) {
+	dir := t.TempDir()
+	store := NewPageStorage()
+	_, err := store.CreatePage("only-page", "text")
+	assert.NoError(t, err)
+	assert.NoError(t, store.Dump(dir))
+
+	shardFile := filepath.Join(dir, fmt.Sprintf("shard_%d.json", shardIndex("only-page")))
+	assert.NoError(t, os.WriteFile(shardFile+".tmp", []byte("partial"), 0o644))
+
+	assert.True(t, store.DeletePage("only-page"))
+	assert.NoError(t, store.Dump(dir))
+
+	_, err = os.Stat(shardFile)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(shardFile + ".tmp")
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	fresh := NewPageStorage()
+	assert.NoError(t, fresh.Load(dir))
+	_, found := fresh.GetHistory("only-page")
+	assert.False(t, found)
 }
