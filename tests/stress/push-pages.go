@@ -74,6 +74,7 @@ func PushPages(t *testing.T) {
 	fmt.Printf("   Total Requests: %d\n", totalRequests)
 	fmt.Printf("   Duration: %v\n", duration)
 	fmt.Printf("   Real-world RPS: %.2f\n\n", rps)
+	recordStress("PushPages", totalRequests, duration, rps)
 }
 
 // drain reads the body to completion so the client can reuse the connection.

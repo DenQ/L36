@@ -69,4 +69,5 @@ func PushVersions(t *testing.T) {
 	fmt.Printf("   Total Requests (Create + Versions): %d\n", totalRequests)
 	fmt.Printf("   Duration: %v\n", duration)
 	fmt.Printf("   Real-world RPS (with Diffs): %.2f\n\n", rps)
+	recordStress("PushVersions", totalRequests, duration, rps)
 }
