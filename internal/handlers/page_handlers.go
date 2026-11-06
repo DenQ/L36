@@ -152,9 +152,13 @@ func GetVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version, ok := storage.GPageStorage.GetVersion(pid, vid)
-	if !ok {
+	version, err := storage.GPageStorage.GetVersion(pid, vid)
+	if errors.Is(err, storage.ErrVersionNotFound) {
 		http.Error(w, "Version not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Failed to restore version", http.StatusInternalServerError)
 		return
 	}
 
@@ -191,9 +195,13 @@ func GetLatestVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version, ok := storage.GPageStorage.GetLatestVersion(pid)
-	if !ok {
+	version, err := storage.GPageStorage.GetLatestVersion(pid)
+	if errors.Is(err, storage.ErrVersionNotFound) {
 		http.Error(w, "Version not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Failed to restore version", http.StatusInternalServerError)
 		return
 	}
 

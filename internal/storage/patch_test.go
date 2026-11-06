@@ -23,9 +23,9 @@ func TestPatchIntegrityChain(t *testing.T) {
 		s.AddVersion(pid, newContent)
 	}
 
-	firstVersion, ok := s.GetVersion(pid, firstVid)
+	firstVersion, err := s.GetVersion(pid, firstVid)
 
-	assert.True(t, ok, "Первая версия должна быть найдена")
+	assert.NoError(t, err, "Первая версия должна быть найдена")
 	assert.Equal(t, initialContent, firstVersion.Content, "Контент первой версии должен восстановиться без искажений")
 
 	history2, _ := s.GetHistory(pid)
@@ -73,10 +73,10 @@ func TestDeepHistoryIntegrity(t *testing.T) {
 	firstVid := history[0].ID
 
 	start := time.Now()
-	v1, ok := s.GetVersion(pid, firstVid)
+	v1, err := s.GetVersion(pid, firstVid)
 	elapsed := time.Since(start)
 
-	assert.True(t, ok)
+	assert.NoError(t, err)
 	assert.Equal(t, initialText, v1.Content)
 	fmt.Printf("\n[L-36] Restored version 1 from 1000 patches in %v\n", elapsed)
 }

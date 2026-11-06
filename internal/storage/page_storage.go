@@ -98,8 +98,10 @@ func (s *PageStorage) getShard(pid string) *Shard {
 }
 
 var (
-	ErrEmptyPageID = errors.New("empty page id")
-	ErrPageExists  = errors.New("page already exists")
+	ErrEmptyPageID     = errors.New("empty page id")
+	ErrPageExists      = errors.New("page already exists")
+	ErrVersionNotFound = errors.New("version not found")
+	ErrCorruptPatch    = errors.New("corrupt patch")
 )
 
 func (s *PageStorage) CreatePage(pid string, content any) (models.Page, error) {
@@ -230,14 +232,14 @@ func (s *PageStorage) GetHistory(pid string) ([]models.Version, bool) {
 	return history, true
 }
 
-func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) {
+func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, error) {
 	shard := s.getShard(pid)
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
 
 	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
-		return models.Version{}, false
+		return models.Version{}, ErrVersionNotFound
 	}
 
 	var targetIdx int = -1
@@ -249,12 +251,12 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) 
 	}
 
 	if targetIdx == -1 {
-		return models.Version{}, false
+		return models.Version{}, ErrVersionNotFound
 	}
 
 	lastIdx := len(page.Versions) - 1
 	if targetIdx == lastIdx {
-		return page.Versions[targetIdx], true
+		return page.Versions[targetIdx], nil
 	}
 
 	currentText := page.Versions[lastIdx].Content
@@ -265,13 +267,16 @@ func (s *PageStorage) GetVersion(pid string, vid string) (models.Version, bool) 
 			continue
 		}
 
-		diffs, _ := dmp.DiffFromDelta(currentText, patchStr)
+		diffs, err := dmp.DiffFromDelta(currentText, patchStr)
+		if err != nil {
+			return models.Version{}, fmt.Errorf("%w: %s", ErrCorruptPatch, err.Error())
+		}
 		currentText = dmp.DiffText2(diffs)
 	}
 
 	result := page.Versions[targetIdx]
 	result.Content = currentText
-	return result, true
+	return result, nil
 }
 
 func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
@@ -299,13 +304,13 @@ func (s *PageStorage) SetLatest(pid string, vid string) (models.Version, bool) {
 	return models.Version{}, false
 }
 
-func (s *PageStorage) GetLatestVersion(pid string) (models.Version, bool) {
+func (s *PageStorage) GetLatestVersion(pid string) (models.Version, error) {
 	shard := s.getShard(pid)
 	shard.mu.RLock()
 	page, ok := shard.pages[pid]
 	if !ok || len(page.Versions) == 0 {
 		shard.mu.RUnlock()
-		return models.Version{}, false
+		return models.Version{}, ErrVersionNotFound
 	}
 	targetVid := page.Versions[page.LatestIndex].ID
 	shard.mu.RUnlock()
