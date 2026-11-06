@@ -23,6 +23,18 @@ func RegisterRoutes(mux *http.ServeMux, store *storage.PageStorage) {
 	mux.HandleFunc("GET /api/pages/{pid}/versions/latest", h.GetLatestVersionHandler)
 }
 
+// pageForClient copies the page and drops storage fields the HTTP contract does not return.
+func pageForClient(page models.Page) models.Page {
+	out := page
+	out.Versions = make([]models.Version, len(page.Versions))
+	copy(out.Versions, page.Versions)
+	for i := range out.Versions {
+		out.Versions[i].Snapshot = false
+		out.Versions[i].Patch = ""
+	}
+	return out
+}
+
 func contentString(content any) string {
 	if str, ok := content.(string); ok {
 		return str
@@ -65,7 +77,7 @@ func (h *Handler) CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(page); err != nil {
+	if err := json.NewEncoder(w).Encode(pageForClient(page)); err != nil {
 		http.Error(w, "JSON encoding error", http.StatusInternalServerError)
 		return
 	}

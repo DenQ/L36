@@ -60,25 +60,32 @@ func TestPatchEdgeCases(t *testing.T) {
 }
 
 func TestDeepHistoryIntegrity(t *testing.T) {
-	s := GPageStorage
-	pid := "deep-page-test"
-	initialText := "Start Line"
-	_, _ = s.CreatePage(pid, initialText)
+	s := NewPageStorage()
+	const pid = "deep-page-test"
+	_, err := s.CreatePage(pid, "Start Line")
+	assert.NoError(t, err)
 
 	for i := 0; i < 1000; i++ {
-		s.AddVersion(pid, fmt.Sprintf("Line %d", i))
+		_, ok := s.AddVersion(pid, fmt.Sprintf("Line %d", i))
+		assert.True(t, ok)
 	}
 
-	history, _ := s.GetHistory(pid)
-	firstVid := history[0].ID
+	history, ok := s.GetHistory(pid)
+	assert.True(t, ok)
+
+	// Depth 15 sits between the snapshots at 10 and 20, so restore has to apply patches.
+	const gapDepth = snapshotEvery + 5
+	gap := history[gapDepth-1]
+	assert.False(t, gap.Snapshot)
+	assert.Empty(t, gap.Content)
 
 	start := time.Now()
-	v1, err := s.GetVersion(pid, firstVid)
+	got, err := s.GetVersion(pid, gap.ID)
 	elapsed := time.Since(start)
 
 	assert.NoError(t, err)
-	assert.Equal(t, initialText, v1.Content)
-	fmt.Printf("\n[L-36] Restored version 1 from 1000 patches in %v\n", elapsed)
+	assert.Equal(t, fmt.Sprintf("Line %d", gapDepth-2), got.Content)
+	fmt.Printf("\n[L-36] Restored depth %d from the nearest snapshot in %v\n", gapDepth, elapsed)
 }
 
 func TestJsonPatchCorruption(t *testing.T) {

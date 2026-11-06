@@ -324,6 +324,7 @@ func TestHistoryListIsFlat(t *testing.T) {
 	rrCreate := httptest.NewRecorder()
 	h.CreatePageHandler(rrCreate, create)
 	assert.Equal(t, http.StatusCreated, rrCreate.Code)
+	assert.NotContains(t, rrCreate.Body.String(), `"snapshot"`)
 
 	var page models.Page
 	assert.NoError(t, json.Unmarshal(rrCreate.Body.Bytes(), &page))
@@ -333,6 +334,7 @@ func TestHistoryListIsFlat(t *testing.T) {
 	rrAdd := httptest.NewRecorder()
 	h.AddVersionHandler(rrAdd, add)
 	assert.Equal(t, http.StatusCreated, rrAdd.Code)
+	assert.NotContains(t, rrAdd.Body.String(), `"snapshot"`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/pages/flat-tree/versions", nil)
 	req.SetPathValue("pid", "flat-tree")
