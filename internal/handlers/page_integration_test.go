@@ -3,12 +3,15 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
-	"l36/internal/models"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"l36/internal/models"
+	"l36/internal/storage"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFullPageFlow(t *testing.T) {
@@ -213,4 +216,22 @@ func TestSetLatestRollback(t *testing.T) {
 			assert.False(t, v.IsLatest, "V2 должна потерять статус Latest")
 		}
 	}
+}
+
+func TestCreatePageRejectsEmptyID(t *testing.T) {
+	bodies := []string{
+		`{"pageId":"","content":"nope"}`,
+		`{"content":"nope"}`,
+	}
+
+	for _, body := range bodies {
+		req := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(body))
+		rr := httptest.NewRecorder()
+		CreatePageHandler(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	}
+
+	_, found := storage.GPageStorage.GetHistory("")
+	assert.False(t, found)
 }

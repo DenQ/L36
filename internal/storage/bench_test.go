@@ -11,7 +11,7 @@ func BenchmarkStoragePerformance(b *testing.B) {
 	pids := make([]string, 36)
 	for i := 0; i < len(pids); i++ {
 		pid := fmt.Sprintf("bench-page-%d", i)
-		s.CreatePage(pid, "initial content")
+		_, _ = s.CreatePage(pid, "initial content")
 		pids[i] = pid
 	}
 

@@ -42,7 +42,11 @@ func CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	page := storage.GPageStorage.CreatePage(input.PageId, contentStr)
+	page, ok := storage.GPageStorage.CreatePage(input.PageId, contentStr)
+	if !ok {
+		http.Error(w, "Missing page ID", http.StatusBadRequest)
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(page); err != nil {

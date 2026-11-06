@@ -95,7 +95,11 @@ func (s *PageStorage) getShard(pid string) *Shard {
 	return s.shards[shardIndex(pid)]
 }
 
-func (s *PageStorage) CreatePage(pid string, content any) models.Page {
+func (s *PageStorage) CreatePage(pid string, content any) (models.Page, bool) {
+	if pid == "" {
+		return models.Page{}, false
+	}
+
 	shard := s.getShard(pid)
 
 	shard.mu.Lock()
@@ -103,7 +107,7 @@ func (s *PageStorage) CreatePage(pid string, content any) models.Page {
 
 	// if page exist return her. Else better htrow error...
 	if page, ok := shard.pages[pid]; ok {
-		return *page
+		return *page, true
 	}
 
 	var contentStr string
@@ -144,7 +148,7 @@ func (s *PageStorage) CreatePage(pid string, content any) models.Page {
 	}
 
 	shard.pages[pid] = &newPage
-	return newPage
+	return newPage, true
 }
 
 func (s *PageStorage) DeletePage(pid string) bool {
