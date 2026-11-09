@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"l36/internal/models"
+	"l36/internal/storage"
 )
 
 func main() {
@@ -21,16 +18,12 @@ func main() {
 		os.Exit(2)
 	}
 
-	path := filepath.Join(*dir, fmt.Sprintf("shard_%d.json", *n))
-	pages, err := loadPages(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Printf("shard %d is empty\n", *n)
-			return
-		}
+	store := storage.NewPageStorage()
+	if err := store.Load(*dir); err != nil {
 		fmt.Fprintf(os.Stderr, "view: %v\n", err)
 		os.Exit(1)
 	}
+	pages := store.ShardPages(*n)
 	if len(pages) == 0 {
 		fmt.Printf("shard %d is empty\n", *n)
 		return
@@ -41,32 +34,4 @@ func main() {
 		}
 		writePage(os.Stdout, page)
 	}
-}
-
-func loadPages(path string) ([]models.Page, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var pages []models.Page
-	sc := bufio.NewScanner(f)
-	buf := make([]byte, 64*1024)
-	sc.Buffer(buf, 64<<20)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var page models.Page
-		if err := json.Unmarshal(line, &page); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		pages = append(pages, page)
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
-	return pages, nil
 }
