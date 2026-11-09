@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -54,12 +55,11 @@ func (s *seeder) run() error {
 	if err := s.drafts(); err != nil {
 		return err
 	}
-	for i := 1; i <= 12; i++ {
-		if err := s.short(i); err != nil {
-			return err
-		}
+	pages, versions, err := s.bulk()
+	if err != nil {
+		return err
 	}
-	fmt.Printf("seeded %s\n", s.base)
+	fmt.Printf("seeded %s (%d bulk pages, %d versions, ~%d versions per shard)\n", s.base, pages, versions, versions/36)
 	return nil
 }
 
@@ -144,31 +144,54 @@ func (s *seeder) drafts() error {
 	return err
 }
 
-func (s *seeder) short(n int) error {
-	id := fmt.Sprintf("seed-page-%02d", n)
-	if _, err := s.reset(id, fmt.Sprintf("Страница %d, первая версия", n)); err != nil {
+// bulk writes three pages onto every shard. Version counts are 50, 100 and 150,
+// so a page averages 100 versions. pageId is chosen so fnv32a matches storage.shardIndex.
+func (s *seeder) bulk() (int, int, error) {
+	counts := []int{50, 100, 150}
+	pages := 0
+	versions := 0
+	for shard := 0; shard < 36; shard++ {
+		for p, n := range counts {
+			id, err := idForShard(shard, p)
+			if err != nil {
+				return pages, versions, err
+			}
+			if err := s.history(id, n); err != nil {
+				return pages, versions, err
+			}
+			pages++
+			versions += n
+		}
+	}
+	return pages, versions, nil
+}
+
+func (s *seeder) history(id string, n int) error {
+	if _, err := s.reset(id, fmt.Sprintf("%s, версия 1", id)); err != nil {
 		return err
 	}
-	var fork string
-	steps := 2 + n%4
-	for i := 2; i <= steps; i++ {
-		vid, err := s.add(id, fmt.Sprintf("Страница %d, версия %d", n, i))
-		if err != nil {
-			return err
-		}
-		if i == 2 {
-			fork = vid
-		}
-	}
-	if n%3 == 0 && fork != "" {
-		if err := s.head(id, fork); err != nil {
-			return err
-		}
-		if _, err := s.add(id, fmt.Sprintf("Страница %d, ветка от второй версии", n)); err != nil {
+	for i := 2; i <= n; i++ {
+		if _, err := s.add(id, fmt.Sprintf("%s, версия %d", id, i)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func idForShard(shard, page int) (string, error) {
+	for k := 0; k < 10000; k++ {
+		id := fmt.Sprintf("seed-s%02d-p%d-%d", shard, page, k)
+		if shardOf(id) == shard {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("no page id for shard %d page %d", shard, page)
+}
+
+func shardOf(pageID string) int {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(pageID))
+	return int(h.Sum32() % 36)
 }
 
 func (s *seeder) reset(id, content string) (string, error) {

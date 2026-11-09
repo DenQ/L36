@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -47,23 +46,7 @@ func main() {
 	saveEvery := saveInterval(os.Getenv("SAVE_INTERVAL_SECONDS"))
 
 	quit := make(chan struct{})
-	var autosave sync.WaitGroup
-	autosave.Add(1)
-	go func() {
-		defer autosave.Done()
-		ticker := time.NewTicker(saveEvery)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := store.Dump(dataDir); err != nil {
-					log.Printf("Auto-save failed: %v", err)
-				}
-			case <-quit:
-				return
-			}
-		}
-	}()
+	store.StartFlusher(saveEvery, quit)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -96,10 +79,9 @@ func main() {
 		}
 	}()
 
-	// Graceful Shutdown
+	// Graceful Shutdown. In-flight requests finish before the last flush,
+	// so a version accepted with 201 is not left only in memory.
 	<-stop
-	close(quit)
-	autosave.Wait()
 	fmt.Println("\n🛑 Stop signal received. Terminating active sessions...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -109,12 +91,11 @@ func main() {
 		log.Fatalf("Forced shutdown error: %v", err)
 	}
 
-	fmt.Println("Finalizing data dump for 36 shards...")
+	fmt.Println("Finalizing shard logs...")
 	start := time.Now()
-	if err := store.Dump(dataDir); err != nil {
-		log.Printf("Final dump failed: %v", err)
-	}
-	fmt.Printf("Dump completed in %v\n", time.Since(start))
+	close(quit)
+	store.FlushDone()
+	fmt.Printf("Flush completed in %v\n", time.Since(start))
 
 	fmt.Println("👋 L-36 secure shutdown complete. Standby.")
 }
