@@ -43,6 +43,7 @@ func PushPages(t *testing.T) {
 		p := map[string]any{
 			"content": fmt.Sprintf("stress test content variant %d - %s", i, uuid.New().String()),
 			"pageId":  fmt.Sprintf("page-%d", i%36),
+			"userId":  "stress",
 		}
 		payloadPool[i], _ = json.Marshal(p)
 	}

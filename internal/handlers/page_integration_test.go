@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ func TestFullPageFlow(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"pageId":  testPID,
 		"content": content1,
+		"userId":  "alice",
 	})
 
 	req1 := httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(body))
@@ -45,7 +47,7 @@ func TestFullPageFlow(t *testing.T) {
 	assert.Equal(t, `{"text":"Version 1"}`, page1.Versions[0].Content)
 
 	content2 := map[string]string{"text": "Version 2"}
-	body2, _ := json.Marshal(map[string]any{"content": content2})
+	body2, _ := json.Marshal(map[string]any{"content": content2, "userId": "bob"})
 
 	req2 := httptest.NewRequest("POST", "/api/pages/"+pid+"/versions", bytes.NewBuffer(body2))
 	req2.SetPathValue("pid", pid)
@@ -107,6 +109,7 @@ func TestDeletePage(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"content": content,
 		"pageId":  testPID,
+		"userId":  "alice",
 	})
 
 	reqCreate := httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(body))
@@ -139,6 +142,7 @@ func TestConcurrentVersions(t *testing.T) {
 	pBody, _ := json.Marshal(map[string]any{
 		"content": content,
 		"pageId":  testPID,
+		"userId":  "alice",
 	})
 	rrP := httptest.NewRecorder()
 	h.CreatePageHandler(rrP, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(pBody)))
@@ -156,7 +160,7 @@ func TestConcurrentVersions(t *testing.T) {
 		go func(val int) {
 			defer wg.Done()
 			c := map[string]int{"val": val}
-			b, _ := json.Marshal(map[string]any{"content": c})
+			b, _ := json.Marshal(map[string]any{"content": c, "userId": "alice"})
 
 			req := httptest.NewRequest("POST", "/api/pages/"+pid+"/versions", bytes.NewBuffer(b))
 			req.SetPathValue("pid", pid)
@@ -205,7 +209,7 @@ func TestSetLatestRollback(t *testing.T) {
 	h := newHandler()
 	pID := "rollback-test-id"
 	content1 := "First Strategic Data"
-	body1, _ := json.Marshal(map[string]any{"pageId": pID, "content": content1})
+	body1, _ := json.Marshal(map[string]any{"pageId": pID, "content": content1, "userId": "alice"})
 
 	rr1 := httptest.NewRecorder()
 	h.CreatePageHandler(rr1, httptest.NewRequest("POST", "/api/pages", bytes.NewBuffer(body1)))
@@ -215,7 +219,7 @@ func TestSetLatestRollback(t *testing.T) {
 	v1ID := page.Versions[0].ID
 
 	content2 := "Second Strategic Data"
-	body2, _ := json.Marshal(map[string]any{"content": content2})
+	body2, _ := json.Marshal(map[string]any{"content": content2, "userId": "alice"})
 
 	req2 := httptest.NewRequest("POST", "/api/pages/"+pID+"/versions", bytes.NewBuffer(body2))
 	req2.SetPathValue("pid", pID)
@@ -280,8 +284,8 @@ func TestMissingVersionSaysVersionNotFound(t *testing.T) {
 func TestCreatePageRejectsEmptyID(t *testing.T) {
 	h := newHandler()
 	bodies := []string{
-		`{"pageId":"","content":"nope"}`,
-		`{"content":"nope"}`,
+		`{"pageId":"","content":"nope","userId":"alice"}`,
+		`{"content":"nope","userId":"alice"}`,
 	}
 
 	for _, body := range bodies {
@@ -299,8 +303,8 @@ func TestCreatePageRejectsEmptyID(t *testing.T) {
 func TestCreatePageConflict(t *testing.T) {
 	h := newHandler()
 	const pid = "handler-create-duplicate"
-	first := `{"pageId":"` + pid + `","content":"original"}`
-	second := `{"pageId":"` + pid + `","content":"replacement"}`
+	first := `{"pageId":"` + pid + `","content":"original","userId":"alice"}`
+	second := `{"pageId":"` + pid + `","content":"replacement","userId":"alice"}`
 
 	req1 := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(first))
 	rr1 := httptest.NewRecorder()
@@ -320,7 +324,7 @@ func TestCreatePageConflict(t *testing.T) {
 
 func TestHistoryListIsFlat(t *testing.T) {
 	h := newHandler()
-	create := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(`{"pageId":"flat-tree","content":"A"}`))
+	create := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(`{"pageId":"flat-tree","content":"A","userId":"alice"}`))
 	rrCreate := httptest.NewRecorder()
 	h.CreatePageHandler(rrCreate, create)
 	assert.Equal(t, http.StatusCreated, rrCreate.Code)
@@ -329,7 +333,7 @@ func TestHistoryListIsFlat(t *testing.T) {
 	var page models.Page
 	assert.NoError(t, json.Unmarshal(rrCreate.Body.Bytes(), &page))
 
-	add := httptest.NewRequest(http.MethodPost, "/api/pages/flat-tree/versions", bytes.NewBufferString(`{"content":"B"}`))
+	add := httptest.NewRequest(http.MethodPost, "/api/pages/flat-tree/versions", bytes.NewBufferString(`{"content":"B","userId":"bob"}`))
 	add.SetPathValue("pid", "flat-tree")
 	rrAdd := httptest.NewRecorder()
 	h.AddVersionHandler(rrAdd, add)
@@ -354,7 +358,7 @@ func TestHistoryListIsFlat(t *testing.T) {
 
 func TestHistoryListShowsBothBranches(t *testing.T) {
 	h := newHandler()
-	create := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(`{"pageId":"flat-branches","content":"A"}`))
+	create := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(`{"pageId":"flat-branches","content":"A","userId":"alice"}`))
 	rrCreate := httptest.NewRecorder()
 	h.CreatePageHandler(rrCreate, create)
 	assert.Equal(t, http.StatusCreated, rrCreate.Code)
@@ -363,7 +367,7 @@ func TestHistoryListShowsBothBranches(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(rrCreate.Body.Bytes(), &page))
 	rootID := page.Versions[0].ID
 
-	addB := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"B"}`))
+	addB := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"B","userId":"alice"}`))
 	addB.SetPathValue("pid", "flat-branches")
 	rrB := httptest.NewRecorder()
 	h.AddVersionHandler(rrB, addB)
@@ -371,7 +375,7 @@ func TestHistoryListShowsBothBranches(t *testing.T) {
 	var b models.Version
 	assert.NoError(t, json.Unmarshal(rrB.Body.Bytes(), &b))
 
-	addC := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"C"}`))
+	addC := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"C","userId":"alice"}`))
 	addC.SetPathValue("pid", "flat-branches")
 	rrC := httptest.NewRecorder()
 	h.AddVersionHandler(rrC, addC)
@@ -387,7 +391,7 @@ func TestHistoryListShowsBothBranches(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(rrMove.Body.Bytes(), &moved))
 	assert.Equal(t, "B", moved.Content)
 
-	addBA := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"BA"}`))
+	addBA := httptest.NewRequest(http.MethodPost, "/api/pages/flat-branches/versions", bytes.NewBufferString(`{"content":"BA","userId":"alice"}`))
 	addBA.SetPathValue("pid", "flat-branches")
 	rrBA := httptest.NewRecorder()
 	h.AddVersionHandler(rrBA, addBA)
@@ -418,4 +422,78 @@ func TestHistoryListShowsBothBranches(t *testing.T) {
 	assert.Empty(t, root.ParentID)
 	assert.False(t, root.IsLatest)
 	assert.Equal(t, 2, childrenOfB)
+}
+
+func TestUserIDOnWrite(t *testing.T) {
+	h := newHandler()
+	const pid = "user-id-page"
+
+	reject := func(method, target, body, want string) {
+		t.Helper()
+		req := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+		if method == http.MethodPost && target != "/api/pages" {
+			req.SetPathValue("pid", pid)
+		}
+		rr := httptest.NewRecorder()
+		if target == "/api/pages" {
+			h.CreatePageHandler(rr, req)
+		} else {
+			h.AddVersionHandler(rr, req)
+		}
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Equal(t, want, rr.Body.String())
+	}
+
+	reject(http.MethodPost, "/api/pages", `{"pageId":"`+pid+`","content":"A"}`, "Missing user ID\n")
+	reject(http.MethodPost, "/api/pages", `{"pageId":"`+pid+`","content":"A","userId":""}`, "Missing user ID\n")
+	reject(http.MethodPost, "/api/pages", `{"pageId":"`+pid+`","content":"A","userId":"`+strings.Repeat("u", 257)+`"}`, "User ID too long\n")
+
+	_, found := h.store.GetHistory(pid)
+	assert.False(t, found)
+
+	create := httptest.NewRequest(http.MethodPost, "/api/pages", bytes.NewBufferString(`{"pageId":"`+pid+`","content":"A","userId":"alice"}`))
+	rrCreate := httptest.NewRecorder()
+	h.CreatePageHandler(rrCreate, create)
+	assert.Equal(t, http.StatusCreated, rrCreate.Code)
+	var page models.Page
+	assert.NoError(t, json.Unmarshal(rrCreate.Body.Bytes(), &page))
+	assert.Equal(t, "alice", page.Versions[0].UserID)
+
+	addURL := "/api/pages/" + pid + "/versions"
+	reject(http.MethodPost, addURL, `{"content":"B"}`, "Missing user ID\n")
+	reject(http.MethodPost, addURL, `{"content":"B","userId":""}`, "Missing user ID\n")
+	reject(http.MethodPost, addURL, `{"content":"B","userId":"`+strings.Repeat("u", 257)+`"}`, "User ID too long\n")
+
+	history, found := h.store.GetHistory(pid)
+	assert.True(t, found)
+	assert.Len(t, history, 1)
+
+	add := httptest.NewRequest(http.MethodPost, addURL, bytes.NewBufferString(`{"content":"B","userId":"bob"}`))
+	add.SetPathValue("pid", pid)
+	rrAdd := httptest.NewRecorder()
+	h.AddVersionHandler(rrAdd, add)
+	assert.Equal(t, http.StatusCreated, rrAdd.Code)
+	var added models.Version
+	assert.NoError(t, json.Unmarshal(rrAdd.Body.Bytes(), &added))
+	assert.Equal(t, "bob", added.UserID)
+
+	reqList := httptest.NewRequest(http.MethodGet, addURL, nil)
+	reqList.SetPathValue("pid", pid)
+	rrList := httptest.NewRecorder()
+	h.GetHistoryHandler(rrList, reqList)
+	assert.Equal(t, http.StatusOK, rrList.Code)
+	var items []models.VersionListItem
+	assert.NoError(t, json.Unmarshal(rrList.Body.Bytes(), &items))
+	assert.Equal(t, []string{"alice", "bob"}, []string{items[0].UserID, items[1].UserID})
+
+	move := httptest.NewRequest(http.MethodPost, "/api/pages/"+pid+"/versions/"+page.Versions[0].ID+"/latest", nil)
+	move.SetPathValue("pid", pid)
+	move.SetPathValue("vid", page.Versions[0].ID)
+	rrMove := httptest.NewRecorder()
+	h.SetLatestHandler(rrMove, move)
+	assert.Equal(t, http.StatusOK, rrMove.Code)
+	var moved models.Version
+	assert.NoError(t, json.Unmarshal(rrMove.Body.Bytes(), &moved))
+	assert.Equal(t, "alice", moved.UserID)
+	assert.Equal(t, "A", moved.Content)
 }

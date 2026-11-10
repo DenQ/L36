@@ -199,7 +199,7 @@ func (s *seeder) reset(id, content string) (string, error) {
 		return "", err
 	}
 	var created page
-	body := map[string]string{"pageId": id, "content": content}
+	body := map[string]string{"pageId": id, "content": content, "userId": "seed"}
 	if err := s.call(http.MethodPost, "/api/pages", body, &created); err != nil {
 		return "", err
 	}
@@ -212,7 +212,7 @@ func (s *seeder) reset(id, content string) (string, error) {
 
 func (s *seeder) add(id, content string) (string, error) {
 	var created version
-	if err := s.call(http.MethodPost, "/api/pages/"+id+"/versions", map[string]string{"content": content}, &created); err != nil {
+	if err := s.call(http.MethodPost, "/api/pages/"+id+"/versions", map[string]string{"content": content, "userId": "seed"}, &created); err != nil {
 		return "", err
 	}
 	return created.ID, nil

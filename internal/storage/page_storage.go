@@ -98,16 +98,34 @@ func (s *PageStorage) getShard(pid string) *Shard {
 	return s.shards[shardIndex(pid)]
 }
 
+const maxUserIDLen = 256
+
 var (
 	ErrEmptyPageID     = errors.New("empty page id")
 	ErrPageExists      = errors.New("page already exists")
+	ErrPageNotFound    = errors.New("page not found")
+	ErrEmptyUserID     = errors.New("empty user id")
+	ErrUserIDTooLong   = errors.New("user id too long")
 	ErrVersionNotFound = errors.New("version not found")
 	ErrCorruptPatch    = errors.New("corrupt patch")
 )
 
-func (s *PageStorage) CreatePage(pid string, content string) (models.Page, error) {
+func checkUserID(id string) error {
+	if id == "" {
+		return ErrEmptyUserID
+	}
+	if len(id) > maxUserIDLen {
+		return ErrUserIDTooLong
+	}
+	return nil
+}
+
+func (s *PageStorage) CreatePage(pid string, content string, userID string) (models.Page, error) {
 	if pid == "" {
 		return models.Page{}, ErrEmptyPageID
+	}
+	if err := checkUserID(userID); err != nil {
+		return models.Page{}, err
 	}
 
 	shard := s.getShard(pid)
@@ -125,6 +143,7 @@ func (s *PageStorage) CreatePage(pid string, content string) (models.Page, error
 		ID:        vid,
 		Content:   content,
 		CreatedAt: time.Now().Unix(),
+		UserID:    userID,
 		IsLatest:  true,
 		Snapshot:  true,
 	}
@@ -142,6 +161,7 @@ func (s *PageStorage) CreatePage(pid string, content string) (models.Page, error
 			PageID:    pid,
 			VersionID: vid,
 			CreatedAt: newVersion.CreatedAt,
+			UserID:    newVersion.UserID,
 			IsLatest:  true,
 			Snapshot:  true,
 		},
@@ -165,7 +185,11 @@ func (s *PageStorage) DeletePage(pid string) bool {
 	return false
 }
 
-func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version, bool) {
+func (s *PageStorage) AddVersion(pid string, newContent string, userID string) (models.Version, error) {
+	if err := checkUserID(userID); err != nil {
+		return models.Version{}, err
+	}
+
 	shard := s.getShard(pid)
 
 	for {
@@ -173,14 +197,14 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 		page, ok := shard.pages[pid]
 		if !ok || len(page.Versions) == 0 || !validLatest(page) {
 			shard.mu.RUnlock()
-			return models.Version{}, false
+			return models.Version{}, ErrPageNotFound
 		}
 		headID := page.Versions[page.LatestIndex].ID
 		shard.mu.RUnlock()
 
 		oldContent, err := shard.versionContent(pid, headID)
 		if err != nil {
-			return models.Version{}, false
+			return models.Version{}, err
 		}
 
 		delta := shard.diff(oldContent, newContent)
@@ -189,7 +213,7 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 		page, ok = shard.pages[pid]
 		if !ok || len(page.Versions) == 0 || !validLatest(page) {
 			shard.mu.Unlock()
-			return models.Version{}, false
+			return models.Version{}, ErrPageNotFound
 		}
 		if page.Versions[page.LatestIndex].ID != headID {
 			shard.mu.Unlock()
@@ -211,6 +235,7 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 			Content:   newContent,
 			Patch:     delta,
 			CreatedAt: time.Now().Unix(),
+			UserID:    userID,
 			IsLatest:  true,
 			Snapshot:  true,
 		}
@@ -223,6 +248,7 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 				VersionID: newVer.ID,
 				ParentID:  newVer.ParentID,
 				CreatedAt: newVer.CreatedAt,
+				UserID:    newVer.UserID,
 				IsLatest:  true,
 				Snapshot:  true,
 			},
@@ -233,7 +259,7 @@ func (s *PageStorage) AddVersion(pid string, newContent string) (models.Version,
 
 		newVer.Patch = ""
 		newVer.Snapshot = false
-		return newVer, true
+		return newVer, nil
 	}
 }
 

@@ -6,6 +6,7 @@ type Version struct {
 	Content   string `json:"content,omitempty"`
 	Patch     string `json:"patch,omitempty"`
 	CreatedAt int64  `json:"dt"`
+	UserID    string `json:"userId,omitempty"`
 	IsLatest  bool   `json:"latest"`
 	// Snapshot is true when this version keeps its full text, including an empty page.
 	// A cleared version has neither the flag nor the text; restore rebuilds it from a descendant.
@@ -28,6 +29,7 @@ type VersionListItem struct {
 	ID        string `json:"versionId"`
 	ParentID  string `json:"parentId,omitempty"`
 	CreatedAt int64  `json:"dt"`
+	UserID    string `json:"userId,omitempty"`
 	IsLatest  bool   `json:"latest"`
 }
 

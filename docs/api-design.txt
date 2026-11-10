@@ -1,23 +1,26 @@
 POST :: /api/pages/
--> { pageId: uiid; content: JSON }
-<- 201 { pageId: uiid; versionId: uiid; content: JSON; ... }
+-> { pageId: uiid; content: JSON; userId: string }
+<- 201 { pageId: uiid; versionId: uiid; content: JSON; userId: string; ... }
 
 
 DELETE :: /api/pages/{PID}
 <- 204
 
 POST :: /api/pages/{PID}/versions/
--> { content: JSON }
-<- 201 { pageId: uiid; versionId: uiid; content: JSON; ... }
+-> { content: JSON; userId: string }
+<- 201 { pageId: uiid; versionId: uiid; content: JSON; userId: string; ... }
 
 GET :: /api/pages/{PID}/versions/
-<- 200 [{ versionId, parentId, dt, latest }, ...]
+<- 200 [{ versionId, parentId, dt, userId, latest }, ...]
 
 GET :: /api/pages/{PID}/versions/latest
-<- 200 { pageId: uiid; content: JSON }
+<- 200 { pageId: uiid; content: JSON; userId: string; ... }
 
 GET :: /api/pages/{PID}/versions/{VID}/
-<- 200 { content: JSON, ... }
+<- 200 { content: JSON; userId: string; ... }
 
 POST :: /api/pages/{PID}/versions/{VID}/latest
-<- 200 { pageId: uiid; versionId: uiid; content: JSON; latest: true; ... }
+<- 200 { pageId: uiid; versionId: uiid; content: JSON; userId: string; latest: true; ... }
+
+userId is required on create and add. Empty, or longer than 256 bytes, is 400.
+Reads, delete, and set-latest do not take it. The node keeps the userId of the write that created it.

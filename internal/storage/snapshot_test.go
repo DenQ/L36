@@ -11,11 +11,11 @@ func TestSnapshotKeepsEveryTenthVersion(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "snapshot-chain"
 
-	_, err := s.CreatePage(pid, "v1")
+	_, err := s.CreatePage(pid, "v1", "user")
 	assert.NoError(t, err)
 	for i := 2; i <= snapshotEvery+5; i++ {
-		_, ok := s.AddVersion(pid, fmt.Sprintf("v%d", i))
-		assert.True(t, ok)
+		_, err = s.AddVersion(pid, fmt.Sprintf("v%d", i), "user")
+		assert.NoError(t, err)
 	}
 
 	history, ok := s.GetHistory(pid)
@@ -67,13 +67,13 @@ func TestSnapshotDepthFollowsParentChain(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "snapshot-branch"
 
-	_, err := s.CreatePage(pid, "v1")
+	_, err := s.CreatePage(pid, "v1", "user")
 	assert.NoError(t, err)
 
 	var sideParent string
 	for i := 2; i <= snapshotEvery+1; i++ {
-		ver, ok := s.AddVersion(pid, fmt.Sprintf("v%d", i))
-		assert.True(t, ok)
+		ver, err := s.AddVersion(pid, fmt.Sprintf("v%d", i), "user")
+		assert.NoError(t, err)
 		if i == 3 {
 			sideParent = ver.ID
 		}
@@ -81,8 +81,8 @@ func TestSnapshotDepthFollowsParentChain(t *testing.T) {
 
 	_, ok := s.SetLatest(pid, sideParent)
 	assert.True(t, ok)
-	_, ok = s.AddVersion(pid, "side")
-	assert.True(t, ok)
+	_, err = s.AddVersion(pid, "side", "user")
+	assert.NoError(t, err)
 
 	history, ok := s.GetHistory(pid)
 	assert.True(t, ok)
@@ -106,10 +106,10 @@ func TestEmptySnapshotReloads(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "snapshot-empty"
 
-	created, err := s.CreatePage(pid, "")
+	created, err := s.CreatePage(pid, "", "user")
 	assert.NoError(t, err)
-	_, ok := s.AddVersion(pid, "next")
-	assert.True(t, ok)
+	_, err = s.AddVersion(pid, "next", "user")
+	assert.NoError(t, err)
 
 	dir := t.TempDir()
 	assert.NoError(t, s.Dump(dir))

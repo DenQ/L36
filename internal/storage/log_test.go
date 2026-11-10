@@ -16,12 +16,12 @@ func TestLogDropsStaleFullText(t *testing.T) {
 	const pid = "compact-page"
 	big := strings.Repeat("a", 32*1024)
 
-	_, err := s.CreatePage(pid, big)
+	_, err := s.CreatePage(pid, big, "user")
 	assert.NoError(t, err)
 	assert.NoError(t, s.Dump(dir))
 	for i := 2; i <= snapshotEvery+12; i++ {
-		_, ok := s.AddVersion(pid, big+fmt.Sprintf("-%d", i))
-		assert.True(t, ok)
+		_, err = s.AddVersion(pid, big+fmt.Sprintf("-%d", i), "user")
+		assert.NoError(t, err)
 		assert.NoError(t, s.Dump(dir))
 	}
 
@@ -51,11 +51,11 @@ func TestSpillKeepsColdVersionReadable(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "spill-chain"
 
-	_, err := s.CreatePage(pid, "v1")
+	_, err := s.CreatePage(pid, "v1", "user")
 	assert.NoError(t, err)
 	for i := 2; i <= snapshotEvery+5; i++ {
-		_, ok := s.AddVersion(pid, fmt.Sprintf("v%d", i))
-		assert.True(t, ok)
+		_, err = s.AddVersion(pid, fmt.Sprintf("v%d", i), "user")
+		assert.NoError(t, err)
 	}
 	assert.NoError(t, s.Dump(dir))
 
@@ -94,12 +94,12 @@ func TestBranchFromSpilledVersionReloads(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "spill-branch"
 
-	created, err := s.CreatePage(pid, "v1")
+	created, err := s.CreatePage(pid, "v1", "user")
 	assert.NoError(t, err)
 	var second string
 	for i := 2; i <= snapshotEvery+5; i++ {
-		ver, ok := s.AddVersion(pid, fmt.Sprintf("v%d", i))
-		assert.True(t, ok)
+		ver, err := s.AddVersion(pid, fmt.Sprintf("v%d", i), "user")
+		assert.NoError(t, err)
 		if i == 2 {
 			second = ver.ID
 		}
@@ -108,8 +108,8 @@ func TestBranchFromSpilledVersionReloads(t *testing.T) {
 
 	_, ok := s.SetLatest(pid, second)
 	assert.True(t, ok)
-	side, ok := s.AddVersion(pid, "side")
-	assert.True(t, ok)
+	side, err := s.AddVersion(pid, "side", "user")
+	assert.NoError(t, err)
 	assert.Equal(t, second, side.ParentID)
 	assert.NoError(t, s.Dump(dir))
 
@@ -135,13 +135,13 @@ func TestSetLatestSurvivesReload(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "spill-latest"
 
-	_, err := s.CreatePage(pid, "a")
+	_, err := s.CreatePage(pid, "a", "user")
 	assert.NoError(t, err)
-	second, ok := s.AddVersion(pid, "b")
-	assert.True(t, ok)
-	_, ok = s.AddVersion(pid, "c")
-	assert.True(t, ok)
-	_, ok = s.SetLatest(pid, second.ID)
+	second, err := s.AddVersion(pid, "b", "user")
+	assert.NoError(t, err)
+	_, err = s.AddVersion(pid, "c", "user")
+	assert.NoError(t, err)
+	_, ok := s.SetLatest(pid, second.ID)
 	assert.True(t, ok)
 	assert.NoError(t, s.Dump(dir))
 

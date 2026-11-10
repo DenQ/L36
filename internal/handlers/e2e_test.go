@@ -30,6 +30,7 @@ func TestE2EPageFlow(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"content": content,
 		"pageId":  testPID,
+		"userId":  "alice",
 	})
 
 	resp, err := client.Post(ts.URL+"/api/pages", "application/json", bytes.NewBuffer(body))
@@ -44,7 +45,7 @@ func TestE2EPageFlow(t *testing.T) {
 	assert.NotEmpty(t, pid)
 
 	versionContent := map[string]string{"title": "Updated by E2E"}
-	vBody, _ := json.Marshal(map[string]any{"content": versionContent})
+	vBody, _ := json.Marshal(map[string]any{"content": versionContent, "userId": "alice"})
 
 	vUrl := fmt.Sprintf("%s/api/pages/%s/versions", ts.URL, pid)
 	vResp, err := client.Post(vUrl, "application/json", bytes.NewBuffer(vBody))
@@ -83,7 +84,7 @@ func TestHTTPRoutesCoverGaps(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, bad.StatusCode)
 	bad.Body.Close()
 
-	created := postJSON(t, client, ts.URL+"/api/pages", `{"pageId":"`+pid+`","content":"first text"}`)
+	created := postJSON(t, client, ts.URL+"/api/pages", `{"pageId":"`+pid+`","content":"first text","userId":"alice"}`)
 	assert.Equal(t, http.StatusCreated, created.StatusCode)
 	var page models.Page
 	assert.NoError(t, json.NewDecoder(created.Body).Decode(&page))
@@ -95,7 +96,7 @@ func TestHTTPRoutesCoverGaps(t *testing.T) {
 	assert.Equal(t, http.StatusOK, latest.StatusCode)
 	assert.Equal(t, "first text", decodeVersion(t, latest).Content)
 
-	added := postJSON(t, client, ts.URL+"/api/pages/"+pid+"/versions", `{"content":"second text"}`)
+	added := postJSON(t, client, ts.URL+"/api/pages/"+pid+"/versions", `{"content":"second text","userId":"bob"}`)
 	assert.Equal(t, http.StatusCreated, added.StatusCode)
 	assert.Equal(t, "second text", decodeVersion(t, added).Content)
 

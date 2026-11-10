@@ -35,6 +35,18 @@ func pageForClient(page models.Page) models.Page {
 	return out
 }
 
+func writeUserIDError(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, storage.ErrEmptyUserID) {
+		http.Error(w, "Missing user ID", http.StatusBadRequest)
+		return true
+	}
+	if errors.Is(err, storage.ErrUserIDTooLong) {
+		http.Error(w, "User ID too long", http.StatusBadRequest)
+		return true
+	}
+	return false
+}
+
 func contentString(content any) string {
 	if str, ok := content.(string); ok {
 		return str
@@ -55,6 +67,7 @@ func (h *Handler) CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Content any    `json:"content"`
 		PageId  string `json:"pageId"`
+		UserID  string `json:"userId"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -62,13 +75,16 @@ func (h *Handler) CreatePageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, err := h.store.CreatePage(input.PageId, contentString(input.Content))
+	page, err := h.store.CreatePage(input.PageId, contentString(input.Content), input.UserID)
 	if errors.Is(err, storage.ErrPageExists) {
 		http.Error(w, "Page already exists", http.StatusConflict)
 		return
 	}
 	if errors.Is(err, storage.ErrEmptyPageID) {
 		http.Error(w, "Missing page ID", http.StatusBadRequest)
+		return
+	}
+	if writeUserIDError(w, err) {
 		return
 	}
 	if err != nil {
@@ -108,7 +124,8 @@ func (h *Handler) AddVersionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input struct {
-		Content any `json:"content"`
+		Content any    `json:"content"`
+		UserID  string `json:"userId"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -116,9 +133,16 @@ func (h *Handler) AddVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newVer, ok := h.store.AddVersion(pid, contentString(input.Content))
-	if !ok {
+	newVer, err := h.store.AddVersion(pid, contentString(input.Content), input.UserID)
+	if writeUserIDError(w, err) {
+		return
+	}
+	if errors.Is(err, storage.ErrPageNotFound) {
 		http.Error(w, "Page not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -147,6 +171,7 @@ func (h *Handler) GetHistoryHandler(w http.ResponseWriter, r *http.Request) {
 			ID:        v.ID,
 			ParentID:  v.ParentID,
 			CreatedAt: v.CreatedAt,
+			UserID:    v.UserID,
 			IsLatest:  v.IsLatest,
 		}
 	}

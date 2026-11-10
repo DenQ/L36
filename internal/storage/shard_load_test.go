@@ -31,7 +31,7 @@ func TestLogRejectsHugeRecord(t *testing.T) {
 func TestLogTruncatesTornTail(t *testing.T) {
 	dir := t.TempDir()
 	store := NewPageStorage()
-	_, err := store.CreatePage("kept", "body")
+	_, err := store.CreatePage("kept", "body", "user")
 	assert.NoError(t, err)
 	assert.NoError(t, store.Dump(dir))
 
@@ -59,7 +59,7 @@ func TestLoadLineBeyondTenMegabytes(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Repeat("a", 11<<20)
 	store := NewPageStorage()
-	_, err := store.CreatePage("big", content)
+	_, err := store.CreatePage("big", content, "user")
 	assert.NoError(t, err)
 	assert.NoError(t, store.Dump(dir))
 
@@ -73,7 +73,7 @@ func TestLoadLineBeyondTenMegabytes(t *testing.T) {
 func TestDeleteStaysGoneAfterReload(t *testing.T) {
 	dir := t.TempDir()
 	store := NewPageStorage()
-	_, err := store.CreatePage("only-page", "text")
+	_, err := store.CreatePage("only-page", "text", "user")
 	assert.NoError(t, err)
 	assert.NoError(t, store.Dump(dir))
 
