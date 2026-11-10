@@ -30,15 +30,15 @@ In another terminal, write a short history, rewind it, and branch. The demo uses
 ```bash
 # Create a page. Its first version is the root of the tree.
 V1=$(curl -s -X POST localhost:1236/api/pages \
-  -d '{"pageId":"doc","content":{"title":"Draft"}}' | jq -r '.versions[0].versionId')
+  -d '{"pageId":"doc","content":{"title":"Draft"},"userId":"alice"}' | jq -r '.versions[0].versionId')
 
 # Two edits.
-curl -s -X POST localhost:1236/api/pages/doc/versions -d '{"content":{"title":"Draft v2"}}'
-curl -s -X POST localhost:1236/api/pages/doc/versions -d '{"content":{"title":"Final"}}'
+curl -s -X POST localhost:1236/api/pages/doc/versions -d '{"content":{"title":"Draft v2"},"userId":"alice"}'
+curl -s -X POST localhost:1236/api/pages/doc/versions -d '{"content":{"title":"Final"},"userId":"alice"}'
 
 # Changed your mind? Move the head back to the first draft and write from there.
 curl -s -X POST localhost:1236/api/pages/doc/versions/$V1/latest
-curl -s -X POST localhost:1236/api/pages/doc/versions -d '{"content":{"title":"Another idea"}}'
+curl -s -X POST localhost:1236/api/pages/doc/versions -d '{"content":{"title":"Another idea"},"userId":"alice"}'
 
 # The whole tree. Nothing was overwritten.
 curl -s localhost:1236/api/pages/doc/versions | jq
@@ -116,15 +116,15 @@ The stress test runs the full HTTP router and storage engine in-process over loo
 
 | Method | Path | Does | Returns |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/pages` | Create a page with its first version | `201` page, `409` exists, `400` empty `pageId` |
-| `POST` | `/api/pages/{pageId}/versions` | Append a version under the head | `201` version, `404` no page |
+| `POST` | `/api/pages` | Create a page with its first version | `201` page, `409` exists, `400` empty `pageId`, or empty or too long `userId` |
+| `POST` | `/api/pages/{pageId}/versions` | Append a version under the head | `201` version, `404` no page, `400` empty or too long `userId` |
 | `GET` | `/api/pages/{pageId}/versions/latest` | Read the head | `200` version |
 | `GET` | `/api/pages/{pageId}/versions/{versionId}` | Read any version | `200` version, `404` |
 | `GET` | `/api/pages/{pageId}/versions` | List the tree, without bodies | `200` list |
 | `POST` | `/api/pages/{pageId}/versions/{versionId}/latest` | Move the head, so the next write branches from here | `200` version, `404` |
 | `DELETE` | `/api/pages/{pageId}` | Delete a page and its history | `204`, `404` |
 
-Request bodies are JSON: `{"pageId": "...", "content": ...}` to create a page, and `{"content": ...}` to append a version. `content` can be a string or any JSON value.
+Request bodies are JSON: `{"pageId": "...", "content": ..., "userId": "..."}` to create a page, and `{"content": ..., "userId": "..."}` to append a version. `content` can be a string or any JSON value. `userId` is the author of that version: a required string of at most 256 bytes. An empty or longer value is `400`. Delete and moving the head do not take a `userId`; the node keeps the author of the write that created it.
 
 Objects and arrays are stored as JSON text, and they come back as a string:
 
@@ -134,11 +134,12 @@ Objects and arrays are stored as JSON text, and they come back as a string:
   "parentId": "c8d0c5c2-13dd-46ee-a7fd-a0d0434e037e",
   "content": "{\"title\":\"Another idea\"}",
   "dt": 1794234088,
+  "userId": "alice",
   "latest": true
 }
 ```
 
-The tree list returns `versionId`, `parentId`, `dt` (Unix seconds), and `latest` for each node. Build the tree from `parentId`. The root has no `parentId`.
+The tree list returns `versionId`, `parentId`, `dt` (Unix seconds), `userId`, and `latest` for each node. Build the tree from `parentId`. The root has no `parentId`.
 
 ## Tools
 

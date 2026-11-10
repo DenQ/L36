@@ -7,7 +7,7 @@ import (
 )
 
 func TestCreatePageRejectsEmptyID(t *testing.T) {
-	page, err := GPageStorage.CreatePage("", "should not stick")
+	page, err := GPageStorage.CreatePage("", "should not stick", "user")
 	assert.ErrorIs(t, err, ErrEmptyPageID)
 	assert.Empty(t, page.ID)
 
@@ -18,11 +18,11 @@ func TestCreatePageRejectsEmptyID(t *testing.T) {
 func TestCreatePageRejectsDuplicate(t *testing.T) {
 	const pid = "create-page-duplicate"
 
-	first, err := GPageStorage.CreatePage(pid, "original")
+	first, err := GPageStorage.CreatePage(pid, "original", "user")
 	assert.NoError(t, err)
 	assert.Equal(t, "original", first.Versions[0].Content)
 
-	again, err := GPageStorage.CreatePage(pid, "replacement")
+	again, err := GPageStorage.CreatePage(pid, "replacement", "user")
 	assert.ErrorIs(t, err, ErrPageExists)
 	assert.Empty(t, again.ID)
 

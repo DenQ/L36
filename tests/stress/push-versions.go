@@ -64,7 +64,7 @@ func PushVersions(t *testing.T) {
 
 			initial := "Initial content"
 			contents = append(contents, initial)
-			pBody, _ := json.Marshal(map[string]any{"pageId": pid, "content": initial})
+			pBody, _ := json.Marshal(map[string]any{"pageId": pid, "content": initial, "userId": "stress"})
 			if status, err := postStatus(client, ts.URL+"/api/pages", pBody); err != nil || status != http.StatusCreated {
 				note("%s create: status %d err %v", pid, status, err)
 			}
@@ -72,7 +72,7 @@ func PushVersions(t *testing.T) {
 			for i := 0; i < stressVersions; i++ {
 				cont := fmt.Sprintf("Content version %d with random junk %s", i, uuid.New().String())
 				contents = append(contents, cont)
-				vBody, _ := json.Marshal(map[string]any{"content": cont})
+				vBody, _ := json.Marshal(map[string]any{"content": cont, "userId": "stress"})
 				vURL := fmt.Sprintf("%s/api/pages/%s/versions", ts.URL, pid)
 				if status, err := postStatus(client, vURL, vBody); err != nil || status != http.StatusCreated {
 					note("%s version %d: status %d err %v", pid, i, status, err)

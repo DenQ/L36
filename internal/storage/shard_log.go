@@ -27,6 +27,7 @@ type logHeader struct {
 	VersionID  string `json:"versionId,omitempty"`
 	ParentID   string `json:"parentId,omitempty"`
 	CreatedAt  int64  `json:"dt,omitempty"`
+	UserID     string `json:"userId,omitempty"`
 	IsLatest   bool   `json:"latest,omitempty"`
 	Snapshot   bool   `json:"snapshot,omitempty"`
 	HasContent bool   `json:"text,omitempty"`
@@ -275,6 +276,7 @@ func (s *Shard) compact(pages []compactPage, gen uint64, src *os.File) error {
 				VersionID:  v.ID,
 				ParentID:   v.ParentID,
 				CreatedAt:  v.CreatedAt,
+				UserID:     v.UserID,
 				IsLatest:   i == len(page.versions)-1 && v.ID == page.latestID,
 				Snapshot:   v.Snapshot,
 				HasContent: hasContent,
@@ -597,6 +599,7 @@ func versionFromHeader(h logHeader, bodyOff int64, bodyLen int) models.Version {
 		ID:             h.VersionID,
 		ParentID:       h.ParentID,
 		CreatedAt:      h.CreatedAt,
+		UserID:         h.UserID,
 		IsLatest:       h.IsLatest,
 		Snapshot:       h.Snapshot,
 		OnDisk:         true,

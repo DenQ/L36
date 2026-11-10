@@ -13,14 +13,14 @@ func TestPatchIntegrityChain(t *testing.T) {
 	pid := "integrity-test-page"
 
 	initialContent := "Original Ship Logs of L-36"
-	_, _ = s.CreatePage(pid, initialContent)
+	_, _ = s.CreatePage(pid, initialContent, "user")
 
 	history, _ := s.GetHistory(pid)
 	firstVid := history[0].ID
 
 	for i := 1; i <= 50; i++ {
 		newContent := fmt.Sprintf("Log Entry #%d: Status is Green. Energy at %d%%", i, 100-i)
-		s.AddVersion(pid, newContent)
+		s.AddVersion(pid, newContent, "user")
 	}
 
 	firstVersion, err := s.GetVersion(pid, firstVid)
@@ -39,22 +39,22 @@ func TestPatchEdgeCases(t *testing.T) {
 	s := GPageStorage
 	pid := "edge-case-page"
 
-	_, _ = s.CreatePage(pid, "First Content")
+	_, _ = s.CreatePage(pid, "First Content", "user")
 	history, _ := s.GetHistory(pid)
 	v1 := history[0].ID
 
-	s.AddVersion(pid, "")
-	s.AddVersion(pid, "{\"json\": true}")
+	s.AddVersion(pid, "", "user")
+	s.AddVersion(pid, "{\"json\": true}", "user")
 
 	ver1, _ := s.GetVersion(pid, v1)
 	assert.Equal(t, "First Content", ver1.Content)
 
 	utf8Content := "L-36 🚀 Heavy Armor \n\t [Verified]"
-	s.AddVersion(pid, utf8Content)
+	s.AddVersion(pid, utf8Content, "user")
 	history2, _ := s.GetHistory(pid)
 	vUTF8 := history2[len(history2)-1].ID
 
-	s.AddVersion(pid, "Next")
+	s.AddVersion(pid, "Next", "user")
 	verUTF8, _ := s.GetVersion(pid, vUTF8)
 	assert.Equal(t, utf8Content, verUTF8.Content)
 }
@@ -62,12 +62,12 @@ func TestPatchEdgeCases(t *testing.T) {
 func TestDeepHistoryIntegrity(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "deep-page-test"
-	_, err := s.CreatePage(pid, "Start Line")
+	_, err := s.CreatePage(pid, "Start Line", "user")
 	assert.NoError(t, err)
 
 	for i := 0; i < 1000; i++ {
-		_, ok := s.AddVersion(pid, fmt.Sprintf("Line %d", i))
-		assert.True(t, ok)
+		_, err = s.AddVersion(pid, fmt.Sprintf("Line %d", i), "user")
+		assert.NoError(t, err)
 	}
 
 	history, ok := s.GetHistory(pid)
@@ -93,8 +93,8 @@ func TestJsonPatchCorruption(t *testing.T) {
 	pid := "json-integrity"
 	complexJSON := `{"key": "value", "nested": {"arr": [1,2,3]}, "special": "quote\" and slash\\"}`
 
-	_, _ = s.CreatePage(pid, complexJSON)
-	s.AddVersion(pid, `{"key": "changed"}`)
+	_, _ = s.CreatePage(pid, complexJSON, "user")
+	s.AddVersion(pid, `{"key": "changed"}`, "user")
 
 	history, _ := s.GetHistory(pid)
 	v1, _ := s.GetVersion(pid, history[0].ID)
@@ -105,7 +105,7 @@ func TestJsonPatchCorruption(t *testing.T) {
 func TestDumpUnderConcurrency(t *testing.T) {
 	s := GPageStorage
 	pid := "concurrent-dump-test"
-	_, _ = s.CreatePage(pid, "initial")
+	_, _ = s.CreatePage(pid, "initial", "user")
 
 	stop := make(chan bool)
 	var wg sync.WaitGroup
@@ -118,7 +118,7 @@ func TestDumpUnderConcurrency(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				s.AddVersion(pid, "new data")
+				s.AddVersion(pid, "new data", "user")
 			}
 		}
 	}()

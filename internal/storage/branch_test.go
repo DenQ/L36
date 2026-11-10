@@ -12,22 +12,22 @@ func TestBranchFromHead(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "tree-page"
 
-	created, err := s.CreatePage(pid, "A")
+	created, err := s.CreatePage(pid, "A", "user")
 	assert.NoError(t, err)
 	aID := created.Versions[0].ID
 
-	b, ok := s.AddVersion(pid, "B")
-	assert.True(t, ok)
-	c, ok := s.AddVersion(pid, "C")
-	assert.True(t, ok)
+	b, err := s.AddVersion(pid, "B", "user")
+	assert.NoError(t, err)
+	c, err := s.AddVersion(pid, "C", "user")
+	assert.NoError(t, err)
 	assert.Equal(t, b.ID, c.ParentID)
 
 	head, ok := s.SetLatest(pid, b.ID)
 	assert.True(t, ok)
 	assert.Equal(t, "B", head.Content)
 
-	ba, ok := s.AddVersion(pid, "BA")
-	assert.True(t, ok)
+	ba, err := s.AddVersion(pid, "BA", "user")
+	assert.NoError(t, err)
 	assert.Equal(t, b.ID, ba.ParentID)
 	assert.Empty(t, ba.Patch)
 
@@ -65,23 +65,23 @@ func TestContinueFromAbandonedLeaf(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "tree-back-to-c"
 
-	_, err := s.CreatePage(pid, "A")
+	_, err := s.CreatePage(pid, "A", "user")
 	assert.NoError(t, err)
-	b, ok := s.AddVersion(pid, "B")
-	assert.True(t, ok)
-	c, ok := s.AddVersion(pid, "C")
-	assert.True(t, ok)
+	b, err := s.AddVersion(pid, "B", "user")
+	assert.NoError(t, err)
+	c, err := s.AddVersion(pid, "C", "user")
+	assert.NoError(t, err)
 
-	_, ok = s.SetLatest(pid, b.ID)
+	_, ok := s.SetLatest(pid, b.ID)
 	assert.True(t, ok)
-	ba, ok := s.AddVersion(pid, "BA")
-	assert.True(t, ok)
+	ba, err := s.AddVersion(pid, "BA", "user")
+	assert.NoError(t, err)
 
 	head, ok := s.SetLatest(pid, c.ID)
 	assert.True(t, ok)
 	assert.Equal(t, "C", head.Content)
-	ca, ok := s.AddVersion(pid, "CA")
-	assert.True(t, ok)
+	ca, err := s.AddVersion(pid, "CA", "user")
+	assert.NoError(t, err)
 	assert.Equal(t, c.ID, ca.ParentID)
 
 	for _, pair := range []struct{ id, text string }{
@@ -114,19 +114,19 @@ func TestSecondBranchFromSameHead(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "tree-two-branches"
 
-	_, err := s.CreatePage(pid, "A")
+	_, err := s.CreatePage(pid, "A", "user")
 	assert.NoError(t, err)
-	b, ok := s.AddVersion(pid, "B")
+	b, err := s.AddVersion(pid, "B", "user")
+	assert.NoError(t, err)
+	_, ok := s.SetLatest(pid, b.ID)
 	assert.True(t, ok)
-	_, ok = s.SetLatest(pid, b.ID)
-	assert.True(t, ok)
-	ba, ok := s.AddVersion(pid, "BA")
-	assert.True(t, ok)
+	ba, err := s.AddVersion(pid, "BA", "user")
+	assert.NoError(t, err)
 
 	_, ok = s.SetLatest(pid, b.ID)
 	assert.True(t, ok)
-	bb, ok := s.AddVersion(pid, "BB")
-	assert.True(t, ok)
+	bb, err := s.AddVersion(pid, "BB", "user")
+	assert.NoError(t, err)
 	assert.Equal(t, b.ID, ba.ParentID)
 	assert.Equal(t, b.ID, bb.ParentID)
 	assert.NotEqual(t, ba.ID, bb.ID)
@@ -146,12 +146,12 @@ func TestEmptyLeafCanBranch(t *testing.T) {
 	s := NewPageStorage()
 	const pid = "tree-empty-leaf"
 
-	created, err := s.CreatePage(pid, "")
+	created, err := s.CreatePage(pid, "", "user")
 	assert.NoError(t, err)
 	rootID := created.Versions[0].ID
 
-	next, ok := s.AddVersion(pid, "next")
-	assert.True(t, ok)
+	next, err := s.AddVersion(pid, "next", "user")
+	assert.NoError(t, err)
 	assert.Equal(t, rootID, next.ParentID)
 
 	root, err := s.GetVersion(pid, rootID)

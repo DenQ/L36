@@ -8,12 +8,12 @@ import (
 
 func TestGetVersionRejectsCorruptPatch(t *testing.T) {
 	const pid = "corrupt-patch-storage"
-	_, err := GPageStorage.CreatePage(pid, "original")
+	_, err := GPageStorage.CreatePage(pid, "original", "user")
 	assert.NoError(t, err)
-	_, ok := GPageStorage.AddVersion(pid, "middle")
-	assert.True(t, ok)
-	_, ok = GPageStorage.AddVersion(pid, "next")
-	assert.True(t, ok)
+	_, err = GPageStorage.AddVersion(pid, "middle", "user")
+	assert.NoError(t, err)
+	_, err = GPageStorage.AddVersion(pid, "next", "user")
+	assert.NoError(t, err)
 
 	history, found := GPageStorage.GetHistory(pid)
 	assert.True(t, found)
