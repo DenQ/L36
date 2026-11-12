@@ -112,6 +112,15 @@ Versioned writes are the number that matters. Each request creates a page or app
 
 The stress test runs the full HTTP router and storage engine in-process over loopback (`httptest`). It does not include the background log flush, which runs off the request path. Each local run is appended to `tests/stress/history.jsonl` with the commit, Go version, and CPU count, so you can track regressions on your own machine.
 
+`make load` is the other number. It builds `bin/l36`, starts that binary, and runs [vegeta](https://github.com/tsenart/vegeta) against it for 10 seconds per scenario with 100 workers. The shard log flushes every second, so disk is on the path. On a 16-core Mac (`darwin/amd64`, Go 1.25):
+
+| Workload | Throughput | p99 |
+| :--- | ---: | ---: |
+| Page writes, mostly `409` once the page exists | **37,300 RPS** | 5.7 ms |
+| Versioned writes, about 2,000 versions on each of 100 pages | **20,500 RPS** | 45 ms |
+
+The same machine's in-process `make stress`, which stops at 50 versions per page and does not flush, did 36,200 page RPS and 19,600 version RPS. The binary with a long history and a live flush stays in that band. Each `make load` appends a line to `load/history.jsonl`.
+
 ## HTTP API
 
 | Method | Path | Does | Returns |
@@ -149,13 +158,19 @@ Fill the server with demo data: three pages per shard with 50, 100, and 150 vers
 make seed
 ```
 
-Load-test the binary with [vegeta](https://github.com/tsenart/vegeta). This is separate from `make stress`: stress measures the engine inside the test process, and this starts `bin/l36` with a flush every second. Install vegeta once (`brew install vegeta`), then:
+Load-test the binary with [vegeta](https://github.com/tsenart/vegeta). Install it once, then run the harness from this repo. It builds `bin/l36`, listens on port `12360`, and writes shards to a temporary directory, so a server you already have on `1236` is left alone.
 
 ```bash
+brew install vegeta
 make load
 ```
 
-Two scenarios, 10 seconds each, 100 workers, port `12360`, data in a temporary directory. Pages cycle 36 ids, so most responses are `409` and still count toward RPS. Versions append a new body to 100 pages and should be `201`. A line per scenario is appended to `load/history.jsonl` with RPS, the 2xx ratio, and p99. `go run ./load -duration 3s` shortens both runs.
+Two scenarios, 10 seconds each, 100 workers, flush every second. Pages cycle 36 ids, so most responses are `409` and still count toward RPS. Versions append a new body to 100 pages and should be `201`. RPS, the 2xx ratio, and p99 are printed and appended to `load/history.jsonl`.
+
+```bash
+go run ./load -duration 3s          # shorter run
+go run ./load -save-interval 60     # flush stays off for the whole run
+```
 
 Print one shard's pages as version trees, straight from its log file:
 
