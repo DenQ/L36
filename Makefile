@@ -1,7 +1,7 @@
 BINARY_NAME=l36
 MAIN_PACKAGE=./cmd/l36
 
-.PHONY: build run test race cover clean dev seed view
+.PHONY: build run test race cover clean dev seed view load
 
 seed:
 	go run ./cmd/seed
@@ -25,6 +25,9 @@ test:
 
 stress:
 	go test -v -count=1 ./tests/stress
+
+load: build
+	go run ./load
 
 bench:
 	go test -v -bench=. ./internal/storage

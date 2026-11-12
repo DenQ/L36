@@ -22,6 +22,9 @@ type Version struct {
 	// BodyHasContent is true when the log record still stores the full text.
 	// Snapshots keep it. A superseded leaf keeps it only until the log is rewritten.
 	BodyHasContent bool `json:"-"`
+	// Depth is 1 at the root and one more than the parent along the chain.
+	// Replay fills it in. The log does not store it.
+	Depth int `json:"-"`
 }
 
 // VersionListItem is one node in a flat history list. The client builds the tree from parentId.

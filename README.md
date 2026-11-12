@@ -149,6 +149,14 @@ Fill the server with demo data: three pages per shard with 50, 100, and 150 vers
 make seed
 ```
 
+Load-test the binary with [vegeta](https://github.com/tsenart/vegeta). This is separate from `make stress`: stress measures the engine inside the test process, and this starts `bin/l36` with a flush every second. Install vegeta once (`brew install vegeta`), then:
+
+```bash
+make load
+```
+
+Two scenarios, 10 seconds each, 100 workers, port `12360`, data in a temporary directory. Pages cycle 36 ids, so most responses are `409` and still count toward RPS. Versions append a new body to 100 pages and should be `201`. A line per scenario is appended to `load/history.jsonl` with RPS, the 2xx ratio, and p99. `go run ./load -duration 3s` shortens both runs.
+
 Print one shard's pages as version trees, straight from its log file:
 
 ```bash
@@ -174,7 +182,8 @@ Copy `example-env` to `.env` to set them. Data lives in `data/shard_N.log`.
 | `internal/handlers` | HTTP routes |
 | `internal/storage` | Shards, diffs, snapshots, shard logs |
 | `internal/models` | Page and version types |
-| `tests/stress` | Throughput tests |
+| `tests/stress` | In-process throughput tests |
+| `load` | Vegeta against the `bin/l36` binary |
 | `docs/api-design.txt` | API contract |
 
 ## Develop
@@ -183,7 +192,8 @@ Copy `example-env` to `.env` to set them. Data lives in `data/shard_N.log`.
 make dev     # reload on change (air)
 make test    # package tests
 make race    # all tests with the race detector
-make stress  # the throughput run above
+make stress  # in-process throughput
+make load    # vegeta against bin/l36
 make bench   # storage benchmarks
 ```
 

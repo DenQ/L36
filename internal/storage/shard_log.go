@@ -611,6 +611,7 @@ func versionFromHeader(h logHeader, bodyOff int64, bodyLen int) models.Version {
 
 func (s *Shard) finishReplay() error {
 	for _, page := range s.pages {
+		assignDepths(page)
 		recomputeSnapshots(page)
 		hot := hotSet(page)
 		for i := range page.Versions {
@@ -634,7 +635,7 @@ func recomputeSnapshots(page *models.Page) {
 	kids := childIndexes(page)
 	for i := range page.Versions {
 		v := &page.Versions[i]
-		v.Snapshot = anchorSnapshot(page, v.ID) || len(kids[v.ID]) == 0
+		v.Snapshot = anchorSnapshot(v) || len(kids[v.ID]) == 0
 	}
 }
 
