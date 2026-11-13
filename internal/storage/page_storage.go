@@ -146,6 +146,7 @@ func (s *PageStorage) CreatePage(pid string, content string, userID string) (mod
 		UserID:    userID,
 		IsLatest:  true,
 		Snapshot:  true,
+		Depth:     1,
 	}
 
 	newPage := models.Page{
@@ -199,12 +200,19 @@ func (s *PageStorage) AddVersion(pid string, newContent string, userID string) (
 			shard.mu.RUnlock()
 			return models.Version{}, ErrPageNotFound
 		}
-		headID := page.Versions[page.LatestIndex].ID
+		head := page.Versions[page.LatestIndex]
+		headID := head.ID
+		oldContent := head.Content
+		// The head keeps its text. SetLatest can move onto a version whose text was cleared.
+		needRestore := head.Spilled || !head.Snapshot
 		shard.mu.RUnlock()
 
-		oldContent, err := shard.versionContent(pid, headID)
-		if err != nil {
-			return models.Version{}, err
+		if needRestore {
+			var err error
+			oldContent, err = shard.versionContent(pid, headID)
+			if err != nil {
+				return models.Version{}, err
+			}
 		}
 
 		delta := shard.diff(oldContent, newContent)
@@ -222,7 +230,7 @@ func (s *PageStorage) AddVersion(pid string, newContent string, userID string) (
 
 		parent := &page.Versions[page.LatestIndex]
 		parent.IsLatest = false
-		if anchorSnapshot(page, parent.ID) {
+		if anchorSnapshot(parent) {
 			parent.Snapshot = true
 		} else {
 			parent.Content = ""
@@ -238,6 +246,7 @@ func (s *PageStorage) AddVersion(pid string, newContent string, userID string) (
 			UserID:    userID,
 			IsLatest:  true,
 			Snapshot:  true,
+			Depth:     parent.Depth + 1,
 		}
 		page.Versions = append(page.Versions, newVer)
 		page.LatestIndex = len(page.Versions) - 1
@@ -395,30 +404,28 @@ func restoreLocked(page *models.Page, vid string) (models.Version, error) {
 
 // anchorSnapshot reports whether this version keeps its full text after a child is added.
 // The root always does. Further down a path, every snapshotEvery-th version does.
-func anchorSnapshot(page *models.Page, id string) bool {
-	idx := versionIndex(page, id)
-	if idx < 0 {
-		return false
-	}
-	if page.Versions[idx].ParentID == "" {
-		return true
-	}
-	return versionDepth(page, id)%snapshotEvery == 0
+// Depth is counted from 1 at the root, so a chain of ten versions anchors the tenth.
+func anchorSnapshot(v *models.Version) bool {
+	return v.ParentID == "" || v.Depth%snapshotEvery == 0
 }
 
-func versionDepth(page *models.Page, id string) int {
-	depth := 0
-	seen := make(map[string]bool)
-	for id != "" && !seen[id] {
-		seen[id] = true
-		idx := versionIndex(page, id)
-		if idx < 0 {
-			break
+// assignDepths fills Depth from parent links. Parents are stored ahead of their children.
+func assignDepths(page *models.Page) {
+	index := make(map[string]int, len(page.Versions))
+	for i := range page.Versions {
+		v := &page.Versions[i]
+		index[v.ID] = i
+		if v.ParentID == "" {
+			v.Depth = 1
+			continue
 		}
-		depth++
-		id = page.Versions[idx].ParentID
+		parent, ok := index[v.ParentID]
+		if !ok {
+			v.Depth = 1
+			continue
+		}
+		v.Depth = page.Versions[parent].Depth + 1
 	}
-	return depth
 }
 
 func versionIndex(page *models.Page, id string) int {

@@ -126,3 +126,38 @@ func TestEmptySnapshotReloads(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "", got.Content)
 }
+
+func TestDepthFollowsParentAndReload(t *testing.T) {
+	s := NewPageStorage()
+	const pid = "depth-chain"
+
+	created, err := s.CreatePage(pid, "v1", "user")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, created.Versions[0].Depth)
+
+	for i := 2; i <= snapshotEvery+2; i++ {
+		ver, err := s.AddVersion(pid, fmt.Sprintf("v%d", i), "user")
+		assert.NoError(t, err)
+		assert.Equal(t, i, ver.Depth)
+	}
+
+	history, ok := s.GetHistory(pid)
+	assert.True(t, ok)
+	assert.True(t, history[snapshotEvery-1].Snapshot)
+	assert.Equal(t, snapshotEvery, history[snapshotEvery-1].Depth)
+	assert.False(t, history[snapshotEvery-2].Snapshot)
+
+	dir := t.TempDir()
+	assert.NoError(t, s.Dump(dir))
+	loaded := NewPageStorage()
+	assert.NoError(t, loaded.Load(dir))
+
+	reloaded, ok := loaded.GetHistory(pid)
+	assert.True(t, ok)
+	assert.Equal(t, snapshotEvery, reloaded[snapshotEvery-1].Depth)
+	assert.True(t, reloaded[snapshotEvery-1].Snapshot)
+
+	next, err := loaded.AddVersion(pid, "after-reload", "user")
+	assert.NoError(t, err)
+	assert.Equal(t, snapshotEvery+3, next.Depth)
+}
